@@ -1,0 +1,20 @@
+{
+  "name": "themis-agent",
+  "version": "1.0.0",
+  "description": "AI Arbitration Agent for Moltbook escrow transactions",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test:flow": "node src/test-flow.js",
+    "register": "node src/register-moltbook.js"
+  },
+  "keywords": ["ai", "agent", "escrow", "arbitration", "moltbook"],
+  "license": "MIT",
+  "dependencies": {
+    "ethers": "^6.11.0",
+    "dotenv": "^16.4.0",
+    "openai": "^4.0.0"
+  }
+}

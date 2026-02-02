@@ -1,0 +1,33 @@
+{
+  "name": "themis",
+  "version": "1.0.0",
+  "description": "DeFi Arbitrator - Trustless escrow for agent-to-agent transactions",
+  "main": "index.js",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "test:coverage": "hardhat coverage",
+    "clean": "hardhat clean",
+    "node": "hardhat node",
+    "deploy:local": "hardhat ignition deploy ./ignition/modules/MoltEscrow.js --network localhost",
+    "deploy:sepolia": "hardhat ignition deploy ./ignition/modules/MoltEscrow.js --network sepolia --verify",
+    "deploy:base-sepolia": "hardhat ignition deploy ./ignition/modules/MoltEscrow.js --network baseSepolia --verify"
+  },
+  "keywords": [
+    "defi",
+    "escrow",
+    "arbitration",
+    "moltbook",
+    "ethereum"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.28.4"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.4.0",
+    "dotenv": "^17.2.3"
+  }
+}

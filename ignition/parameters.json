@@ -1,0 +1,6 @@
+{
+  "MoltEscrowModule": {
+    "arbitrator": "0xB08A7348358d18A3eB13410109bc8eA280eBd896",
+    "feePercentage": 100
+  }
+}
