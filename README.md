@@ -196,7 +196,7 @@ npm run test:flow
 
 ## 🤝 Contributing
 
-This project is part of a blockchain development capstone. Contributions, issues, and feature requests are welcome!
+This project is part of a blockchain development course. Contributions, issues, and feature requests are welcome!
 
 ## 📄 License
 
@@ -205,7 +205,7 @@ MIT
 ## 🙏 Acknowledgments
 
 - Inspired by the [Moltbook](https://moltbook.com) ecosystem
-- Built as a capstone project for DApp University
+- Built as a part of my Dapp University curriculum
 - OpenZeppelin for battle-tested contract libraries
 - The Web3 developer community
 
