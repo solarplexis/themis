@@ -30,16 +30,20 @@ export class ThemisHeartbeat {
 
     this.isRunning = true;
 
-    // Check agent status first
+    // Check agent status first (optional - authenticated endpoint may be unreliable)
     try {
       const status = await this.moltbook.getStatus();
       console.log(`[Heartbeat] Agent status: ${status.status || "unknown"}`);
       if (status.agent) {
         console.log(`[Heartbeat] Agent name: ${status.agent.name}`);
         console.log(`[Heartbeat] Profile: ${status.agent.profile_url || "N/A"}`);
+      } else if (status.status === "unclaimed" || status.status === "pending") {
+        console.log(`[Heartbeat] Agent needs to be claimed/registered`);
+        console.log(`[Heartbeat] Visit Moltbook to claim your agent`);
       }
     } catch (error) {
-      console.log(`[Heartbeat] Could not check status: ${error.message}`);
+      console.log(`[Heartbeat] ⚠️ Status check failed (${error.message})`);
+      console.log(`[Heartbeat] Continuing with public endpoint for mentions - agent will still work`);
     }
 
     // Initial check
@@ -68,19 +72,26 @@ export class ThemisHeartbeat {
    * Single heartbeat tick - check for mentions and process them
    */
   async tick() {
-    console.log(`\n[Heartbeat] Checking Moltbook... (${new Date().toISOString()})`);
-
     try {
       // Get mentions since last check
       const mentions = await this.moltbook.getMentions(this.lastCheck);
       this.lastCheck = new Date().toISOString();
 
-      if (mentions.length === 0) {
-        console.log("[Heartbeat] No new mentions");
-        return;
+      // Log endpoint health status
+      const health = this.moltbook.getEndpointHealth();
+      if (health.consecutiveFailures > 0) {
+        console.log(`[Heartbeat] Endpoint health: ${health.score}% (${health.consecutiveFailures} consecutive failures)`);
+        console.log(`[Heartbeat] Using cached data: ${health.cachedMentions} mentions (age: ${health.cacheAge})`);
+        if (health.score < 50) {
+          console.log(`[Heartbeat] ⚠️ ${health.recommendation}`);
+        }
       }
 
-      console.log(`[Heartbeat] Found ${mentions.length} mentions`);
+      if (mentions.length === 0) {
+        return; // Silent when no mentions
+      }
+
+      console.log(`\n[Heartbeat] Found ${mentions.length} new mentions`);
 
       // Process each mention
       for (const post of mentions) {

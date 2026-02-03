@@ -6,6 +6,7 @@ import { ThemisHeartbeat } from "./heartbeat.js";
 
 // Track escrows awaiting verification
 const pendingVerifications = new Map();
+let lastProcessedBlock = 0;
 
 async function main() {
   console.log("═══════════════════════════════════════════");
@@ -29,7 +30,7 @@ async function main() {
   const contract = new MoltEscrowContract();
 
   console.log(`[Agent] Connected to contract: ${config.contractAddress}`);
-  console.log(`[Agent] Network: Sepolia (${config.chainId})`);
+  console.log(`[Agent] Network: ${config.networkName} (${config.chainId})`);
   console.log(`[Agent] Arbitrator: ${contract.wallet.address}`);
 
   // Verify we're the arbitrator
@@ -54,35 +55,20 @@ async function main() {
     console.log(`  #${i}: ${statusName} - ${escrow.taskCID.slice(0, 20)}...`);
   }
 
-  // Listen for new escrows
-  console.log("\n[Agent] Listening for blockchain events...");
+  // Get current block for polling
+  lastProcessedBlock = await contract.provider.getBlockNumber();
+  console.log(`\n[Agent] Starting from block ${lastProcessedBlock}`);
 
-  contract.onEscrowCreated(async (event) => {
-    console.log(`\n[Event] New escrow created!`);
-    console.log(`  ID: #${event.escrowId}`);
-    console.log(`  Buyer: ${event.buyer}`);
-    console.log(`  Seller: ${event.seller}`);
-    console.log(`  Amount: ${event.amount.toString()} wei`);
-    console.log(`  Task CID: ${event.taskCID}`);
-    console.log(`  Deadline: ${new Date(event.deadline * 1000).toISOString()}`);
-
-    // Store for later verification
-    pendingVerifications.set(event.escrowId, {
-      ...event,
-      createdAt: Date.now(),
-    });
-  });
-
-  contract.onEscrowDisputed(async (event) => {
-    console.log(`\n[Event] Escrow #${event.escrowId} disputed!`);
-  });
+  // Start polling for events (instead of using filters)
+  console.log("[Agent] Polling for blockchain events...");
+  const pollInterval = setInterval(() => pollEvents(contract), config.pollInterval);
 
   // Start Moltbook heartbeat if enabled
   let heartbeat = null;
   if (config.moltbookEnabled && config.moltbookApiKey) {
     console.log("\n[Agent] Starting Moltbook heartbeat...");
     heartbeat = new ThemisHeartbeat();
-    await heartbeat.start(60000); // Check every minute in dev, 4 hours in prod
+    await heartbeat.start(15000); // Check every 15 seconds
   } else {
     console.log("\n[Agent] Moltbook integration disabled (set MOLTBOOK_ENABLED=true to enable)");
   }
@@ -133,6 +119,7 @@ async function main() {
         case "quit":
         case "exit":
           console.log("[Agent] Shutting down...");
+          clearInterval(pollInterval);
           if (heartbeat) heartbeat.stop();
           process.exit(0);
         default:
@@ -142,6 +129,56 @@ async function main() {
       console.error(`[Error] ${error.message}`);
     }
   });
+}
+
+async function pollEvents(contract) {
+  try {
+    const currentBlock = await contract.provider.getBlockNumber();
+
+    if (currentBlock <= lastProcessedBlock) {
+      return; // No new blocks
+    }
+
+    // Query for EscrowCreated events
+    const createdEvents = await contract.queryEvents(
+      "EscrowCreated",
+      lastProcessedBlock + 1,
+      currentBlock
+    );
+
+    for (const event of createdEvents) {
+      console.log(`\n[Event] New escrow created!`);
+      console.log(`  ID: #${event.escrowId}`);
+      console.log(`  Buyer: ${event.buyer}`);
+      console.log(`  Seller: ${event.seller}`);
+      console.log(`  Amount: ${event.amount.toString()} wei`);
+      console.log(`  Task CID: ${event.taskCID}`);
+      console.log(`  Deadline: ${new Date(event.deadline * 1000).toISOString()}`);
+
+      pendingVerifications.set(event.escrowId, {
+        ...event,
+        createdAt: Date.now(),
+      });
+    }
+
+    // Query for EscrowDisputed events
+    const disputedEvents = await contract.queryEvents(
+      "EscrowDisputed",
+      lastProcessedBlock + 1,
+      currentBlock
+    );
+
+    for (const event of disputedEvents) {
+      console.log(`\n[Event] Escrow #${event.escrowId} disputed!`);
+    }
+
+    lastProcessedBlock = currentBlock;
+  } catch (error) {
+    // Silently ignore polling errors (network hiccups)
+    if (!error.message.includes("filter not found")) {
+      console.error(`[Poll] Error: ${error.message}`);
+    }
+  }
 }
 
 async function handleVerify(contract, escrowId, deliverableCID) {

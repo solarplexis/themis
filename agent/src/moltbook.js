@@ -9,11 +9,15 @@ export class MoltbookClient {
   constructor(apiKey) {
     this.apiKey = apiKey || config.moltbookApiKey;
     this.agentId = null;
-    this.username = "themis";
+    this.username = "ThemisEscrow_1770071185";
+    this.lastMentions = []; // Cache for flaky endpoint
+    this.lastSuccessfulFetch = null; // Timestamp of last successful fetch
+    this.consecutiveFailures = 0; // Track failures for backoff
   }
 
   async request(endpoint, options = {}) {
     const url = `${MOLTBOOK_API}${endpoint}`;
+    console.log(`[Moltbook] Requesting: ${url}`);
     const headers = {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${this.apiKey}`,
@@ -21,10 +25,18 @@ export class MoltbookClient {
     };
 
     try {
+      // Add 10-second timeout for all authenticated requests
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      
       const response = await fetch(url, {
         ...options,
         headers,
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
+      console.log(`[Moltbook] Response status: ${response.status}`);
 
       if (!response.ok) {
         const error = await response.text();
@@ -33,9 +45,35 @@ export class MoltbookClient {
 
       return await response.json();
     } catch (error) {
+      if (error.name === 'AbortError') {
+        console.error(`[Moltbook] Request to ${endpoint} timed out after 10s`);
+        throw new Error('Request timeout');
+      }
       console.error(`[Moltbook] Request to ${endpoint} failed: ${error.message}`);
       throw error;
     }
+  }
+
+  /**
+   * Get health status of the Moltbook endpoint
+   * Returns reliability score and recommendation
+   */
+  getEndpointHealth() {
+    const score = this.consecutiveFailures === 0 ? 100 : 
+                  this.consecutiveFailures === 1 ? 75 :
+                  this.consecutiveFailures === 2 ? 50 : 25;
+    
+    const cacheAge = this.lastSuccessfulFetch ? 
+      Math.round((Date.now() - this.lastSuccessfulFetch) / 1000) : null;
+    
+    return {
+      score,
+      consecutiveFailures: this.consecutiveFailures,
+      lastSuccess: this.lastSuccessfulFetch ? new Date(this.lastSuccessfulFetch).toISOString() : 'never',
+      cacheAge: cacheAge ? `${cacheAge}s` : 'N/A',
+      cachedMentions: this.lastMentions.length,
+      recommendation: score < 50 ? 'Consider increasing poll interval' : 'Endpoint healthy'
+    };
   }
 
   /**
@@ -52,14 +90,11 @@ export class MoltbookClient {
   async register() {
     console.log("[Moltbook] Registering Themis agent...");
 
-    const result = await this.request("/register", {
+    const result = await this.request("/agents/register", {
       method: "POST",
       body: JSON.stringify({
-        username: this.username,
-        displayName: "Themis - DeFi Arbitrator",
-        bio: "Trustless escrow & AI arbitration for agent-to-agent transactions. Tag me to secure your deals.",
-        website: `https://sepolia.etherscan.io/address/${config.contractAddress}`,
-        skills: ["escrow", "arbitration", "defi", "verification"],
+        name: this.username,
+        description: "Trustless escrow & AI arbitration for agent-to-agent transactions. Tag me to secure your deals.",
       }),
     });
 
@@ -70,32 +105,99 @@ export class MoltbookClient {
 
   /**
    * Get recent posts mentioning this agent
-   * Fetches from feed and filters for @mentions
+   * Uses public /agents/profile endpoint (no auth required)
+   * Includes retry logic and caching for flaky endpoint
    */
   async getMentions(since = null) {
-    const params = new URLSearchParams({
-      sort: "new",
-      limit: "30",
-    });
-
-    try {
-      // Get feed posts
-      const result = await this.request(`/feed?${params}`);
-      const posts = result.posts || [];
-
-      // Filter for mentions of this agent
-      const mentionPattern = new RegExp(`@${this.username}`, "i");
-      const mentions = posts.filter((post) => {
-        const content = post.content || post.body || "";
-        return mentionPattern.test(content);
-      });
-
-      console.log(`[Moltbook] Found ${mentions.length} mentions in ${posts.length} posts`);
-      return mentions;
-    } catch (error) {
-      console.log(`[Moltbook] Feed fetch failed: ${error.message}`);
-      return [];
+    const maxRetries = 3;
+    const retryDelay = 2000; // 2 seconds
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`[Moltbook] Fetching profile for ${this.username} (attempt ${attempt}/${maxRetries})...`);
+        
+        // Use public profile endpoint - no auth required
+        const url = `${MOLTBOOK_API}/agents/profile?name=${this.username}`;
+        const response = await fetch(url, { 
+          timeout: 10000 // 10 second timeout
+        });
+        
+        console.log(`[Moltbook] Response status: ${response.status}`);
+        
+        if (!response.ok) {
+          const error = await response.text();
+          console.error(`[Moltbook] Error: ${error}`);
+          
+          // If not the last attempt, retry
+          if (attempt < maxRetries) {
+            console.log(`[Moltbook] Retrying in ${retryDelay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+            continue;
+          }
+          
+          // Last attempt failed, return cached data
+          console.log(`[Moltbook] All retries failed, returning cached data (${this.lastMentions.length} mentions)`);
+          this.consecutiveFailures++;
+          return this.lastMentions;
+        }
+        
+        const result = await response.json();
+        
+        if (!result.success || !result.recentPosts) {
+          console.log(`[Moltbook] No recent posts found`);
+          
+          // Try again if not last attempt
+          if (attempt < maxRetries) {
+            console.log(`[Moltbook] Retrying in ${retryDelay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+            continue;
+          }
+          
+          // Return cached data
+          console.log(`[Moltbook] No data available, returning cached data (${this.lastMentions.length} mentions)`);
+          this.consecutiveFailures++;
+          return this.lastMentions;
+        }
+        
+        const posts = result.recentPosts || [];
+        console.log(`[Moltbook] Found ${posts.length} recent posts`);
+        
+        // Filter for posts that mention this agent (excluding own posts)
+        const mentionPattern = new RegExp(`@${this.username}`, "i");
+        const mentions = posts.filter((post) => {
+          const content = post.content || post.title || "";
+          return mentionPattern.test(content);
+        });
+        
+        console.log(`[Moltbook] Found ${mentions.length} mentions`);
+        
+        // Success! Update cache
+        this.lastMentions = mentions;
+        this.lastSuccessfulFetch = Date.now();
+        this.consecutiveFailures = 0;
+        
+        return mentions;
+        
+      } catch (error) {
+        console.error(`[Moltbook] Error fetching profile (attempt ${attempt}/${maxRetries}): ${error.message}`);
+        
+        // If not the last attempt, retry
+        if (attempt < maxRetries) {
+          console.log(`[Moltbook] Retrying in ${retryDelay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+          continue;
+        }
+        
+        // All retries failed, return cached data
+        const cacheAge = this.lastSuccessfulFetch ? Math.round((Date.now() - this.lastSuccessfulFetch) / 1000) : 'never';
+        console.log(`[Moltbook] All retries exhausted. Returning cached data (${this.lastMentions.length} mentions, last updated: ${cacheAge}s ago)`);
+        this.consecutiveFailures++;
+        return this.lastMentions;
+      }
     }
+    
+    // Fallback (should never reach here)
+    return this.lastMentions;
   }
 
   /**
@@ -127,11 +229,6 @@ export class MoltbookClient {
 
   /**
    * Reply to a post
-   */
-  async reply(postId, content) {
-    return this.createPost(content, { replyTo: postId });
-  }
-
   /**
    * Parse a mention post to extract escrow request details
    */

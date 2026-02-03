@@ -11,7 +11,8 @@
     "node": "hardhat node",
     "deploy:local": "hardhat ignition deploy ./ignition/modules/MoltEscrow.js --network localhost",
     "deploy:sepolia": "hardhat ignition deploy ./ignition/modules/MoltEscrow.js --network sepolia --verify",
-    "deploy:base-sepolia": "hardhat ignition deploy ./ignition/modules/MoltEscrow.js --network baseSepolia --verify"
+    "deploy:base-sepolia": "hardhat ignition deploy ./ignition/modules/MoltEscrow.js --network baseSepolia --verify",
+    "deploy:base": "hardhat ignition deploy ./ignition/modules/MoltEscrow.js --network base --verify"
   },
   "keywords": [
     "defi",

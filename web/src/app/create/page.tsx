@@ -1,26 +1,116 @@
 "use client";
 
-import { useState } from "react";
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { parseEther } from "viem";
-import { CONTRACT_ADDRESS, ESCROW_ABI } from "@/config/wagmi";
+import { useState, useEffect } from "react";
+import {
+  useAccount,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+  useReadContract,
+  useChainId,
+} from "wagmi";
+import { parseEther, parseUnits, formatUnits } from "viem";
+import { base } from "wagmi/chains";
+import {
+  CONTRACTS,
+  ESCROW_ABI,
+  ERC20_ABI,
+  MOLT_TOKEN_ADDRESS,
+} from "@/config/wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+
+type PaymentToken = "ETH" | "MOLT";
 
 export default function CreateEscrowPage() {
   const { address, isConnected } = useAccount();
+  const chainId = useChainId();
   const [seller, setSeller] = useState("");
   const [amount, setAmount] = useState("");
   const [taskCID, setTaskCID] = useState("");
   const [deadline, setDeadline] = useState("");
+  const [paymentToken, setPaymentToken] = useState<PaymentToken>("ETH");
+  const [needsApproval, setNeedsApproval] = useState(false);
+  const [approvalStep, setApprovalStep] = useState(false);
 
+  // Get the correct contract address for current chain
+  const contractAddress =
+    chainId === base.id
+      ? CONTRACTS[base.id].escrow
+      : CONTRACTS[11155111].escrow;
+
+  const isOnBase = chainId === base.id;
+  const moltAvailable = isOnBase && CONTRACTS[base.id].molt !== null;
+
+  // Read MOLT balance
+  const { data: moltBalance } = useReadContract({
+    address: MOLT_TOKEN_ADDRESS,
+    abi: ERC20_ABI,
+    functionName: "balanceOf",
+    args: address ? [address] : undefined,
+    query: { enabled: isOnBase && !!address },
+  });
+
+  // Read MOLT allowance
+  const { data: moltAllowance } = useReadContract({
+    address: MOLT_TOKEN_ADDRESS,
+    abi: ERC20_ABI,
+    functionName: "allowance",
+    args: address && contractAddress ? [address, contractAddress] : undefined,
+    query: { enabled: isOnBase && !!address && paymentToken === "MOLT" },
+  });
+
+  // Check if approval is needed for MOLT
+  useEffect(() => {
+    if (paymentToken === "MOLT" && amount && moltAllowance !== undefined) {
+      const amountWei = parseUnits(amount, 18);
+      setNeedsApproval(moltAllowance < amountWei);
+    } else {
+      setNeedsApproval(false);
+    }
+  }, [paymentToken, amount, moltAllowance]);
+
+  // Approval transaction
+  const {
+    data: approvalHash,
+    isPending: isApprovalPending,
+    writeContract: writeApproval,
+  } = useWriteContract();
+
+  const { isLoading: isApprovalConfirming, isSuccess: isApprovalSuccess } =
+    useWaitForTransactionReceipt({
+      hash: approvalHash,
+    });
+
+  // Create escrow transaction
   const { data: hash, isPending, writeContract } = useWriteContract();
 
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
     hash,
   });
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // After approval succeeds, proceed to create escrow
+  useEffect(() => {
+    if (isApprovalSuccess && approvalStep) {
+      setApprovalStep(false);
+      setNeedsApproval(false);
+    }
+  }, [isApprovalSuccess, approvalStep]);
+
+  const handleApprove = async () => {
+    if (!amount) return;
+
+    setApprovalStep(true);
+    const amountWei = parseUnits(amount, 18);
+
+    writeApproval({
+      address: MOLT_TOKEN_ADDRESS,
+      abi: ERC20_ABI,
+      functionName: "approve",
+      args: [contractAddress as `0x${string}`, amountWei],
+    });
+  };
+
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
 
     if (!seller || !amount || !taskCID || !deadline) {
       alert("Please fill in all fields");
@@ -29,13 +119,41 @@ export default function CreateEscrowPage() {
 
     const deadlineTimestamp = Math.floor(new Date(deadline).getTime() / 1000);
 
-    writeContract({
-      address: CONTRACT_ADDRESS,
-      abi: ESCROW_ABI,
-      functionName: "createEscrowETH",
-      args: [seller as `0x${string}`, taskCID, BigInt(deadlineTimestamp)],
-      value: parseEther(amount),
-    });
+    if (paymentToken === "ETH") {
+      writeContract({
+        address: contractAddress as `0x${string}`,
+        abi: ESCROW_ABI,
+        functionName: "createEscrowETH",
+        args: [seller as `0x${string}`, taskCID, BigInt(deadlineTimestamp)],
+        value: parseEther(amount),
+      });
+    } else {
+      // MOLT (ERC20)
+      const amountWei = parseUnits(amount, 18);
+      writeContract({
+        address: contractAddress as `0x${string}`,
+        abi: ESCROW_ABI,
+        functionName: "createEscrowERC20",
+        args: [
+          MOLT_TOKEN_ADDRESS,
+          seller as `0x${string}`,
+          amountWei,
+          taskCID,
+          BigInt(deadlineTimestamp),
+        ],
+      });
+    }
+  };
+
+  const getExplorerUrl = (txHash: string) => {
+    if (chainId === base.id) {
+      return `https://basescan.org/tx/${txHash}`;
+    }
+    return `https://sepolia.etherscan.io/tx/${txHash}`;
+  };
+
+  const getExplorerName = () => {
+    return chainId === base.id ? "Basescan" : "Etherscan";
   };
 
   if (!isConnected) {
@@ -59,17 +177,17 @@ export default function CreateEscrowPage() {
       <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <div className="text-center bg-gray-800/50 border border-gray-700 rounded-lg p-12">
           <div className="text-6xl mb-4">✅</div>
-          <h1 className="text-2xl font-bold mb-4">Escrow Created!</h1>
-          <p className="text-gray-400 mb-6">
+          <h1 className="text-2xl font-bold text-white mb-4">Escrow Created!</h1>
+          <p className="text-gray-300 mb-6">
             Your escrow has been created and funded.
           </p>
           <a
-            href={`https://sepolia.etherscan.io/tx/${hash}`}
+            href={getExplorerUrl(hash!)}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-blue-400 hover:text-blue-300"
+            className="text-blue-300 hover:text-blue-200 underline font-medium"
           >
-            View transaction on Etherscan →
+            View transaction on {getExplorerName()} →
           </a>
         </div>
       </div>
@@ -84,6 +202,49 @@ export default function CreateEscrowPage() {
       </p>
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        {/* Payment Token Selection */}
+        <div>
+          <label className="block text-sm font-medium text-gray-300 mb-2">
+            Payment Token
+          </label>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setPaymentToken("ETH")}
+              className={`flex-1 py-3 px-4 rounded-lg border transition-colors ${
+                paymentToken === "ETH"
+                  ? "bg-indigo-600 border-indigo-500 text-white"
+                  : "bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-600"
+              }`}
+            >
+              <div className="font-semibold">ETH</div>
+              <div className="text-xs opacity-75">Native token</div>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaymentToken("MOLT")}
+              disabled={!moltAvailable}
+              className={`flex-1 py-3 px-4 rounded-lg border transition-colors ${
+                paymentToken === "MOLT"
+                  ? "bg-indigo-600 border-indigo-500 text-white"
+                  : moltAvailable
+                  ? "bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-600"
+                  : "bg-gray-800/50 border-gray-700/50 text-gray-500 cursor-not-allowed"
+              }`}
+            >
+              <div className="font-semibold">MOLT</div>
+              <div className="text-xs opacity-75">
+                {moltAvailable ? "Moltbook Token" : "Base only"}
+              </div>
+            </button>
+          </div>
+          {paymentToken === "MOLT" && moltBalance !== undefined && (
+            <p className="text-gray-500 text-sm mt-2">
+              Balance: {formatUnits(moltBalance as bigint, 18)} MOLT
+            </p>
+          )}
+        </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
             Seller Address
@@ -102,7 +263,7 @@ export default function CreateEscrowPage() {
 
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
-            Amount (ETH)
+            Amount ({paymentToken})
           </label>
           <input
             type="number"
@@ -159,24 +320,56 @@ export default function CreateEscrowPage() {
             </div>
             <div className="flex justify-between">
               <span className="text-gray-400">Amount</span>
-              <span>{amount || "0"} ETH</span>
+              <span>
+                {amount || "0"} {paymentToken}
+              </span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-400">Fee (1%)</span>
-              <span>{amount ? (parseFloat(amount) * 0.01).toFixed(6) : "0"} ETH</span>
+              <span>
+                {amount ? (parseFloat(amount) * 0.01).toFixed(6) : "0"}{" "}
+                {paymentToken}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-400">Network</span>
+              <span>{isOnBase ? "Base" : "Sepolia"}</span>
             </div>
           </div>
         </div>
 
+        {/* Approval button for MOLT */}
+        {paymentToken === "MOLT" && needsApproval && !isApprovalSuccess && (
+          <button
+            type="button"
+            onClick={handleApprove}
+            disabled={isApprovalPending || isApprovalConfirming}
+            className="w-full py-4 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-700 disabled:cursor-not-allowed rounded-lg font-semibold transition-colors"
+          >
+            {isApprovalPending
+              ? "Confirm Approval in Wallet..."
+              : isApprovalConfirming
+              ? "Approving MOLT..."
+              : "Step 1: Approve MOLT"}
+          </button>
+        )}
+
         <button
-          type="submit"
-          disabled={isPending || isConfirming}
-          className="w-full py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed rounded-lg font-semibold transition-colors"
+          type="button"
+          onClick={handleSubmit}
+          disabled={
+            isPending ||
+            isConfirming ||
+            (paymentToken === "MOLT" && needsApproval && !isApprovalSuccess)
+          }
+          className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-700 disabled:cursor-not-allowed rounded-lg font-semibold transition-colors"
         >
           {isPending
             ? "Confirm in Wallet..."
             : isConfirming
             ? "Creating Escrow..."
+            : paymentToken === "MOLT" && needsApproval && !isApprovalSuccess
+            ? "Step 2: Create & Fund Escrow"
             : "Create & Fund Escrow"}
         </button>
       </form>
