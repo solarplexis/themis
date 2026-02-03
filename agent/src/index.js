@@ -81,8 +81,8 @@ async function main() {
   console.log("\n[Agent] Ready! Commands:");
   console.log("  verify <escrowId> <deliverableCID> - Verify and release/refund");
   console.log("  status <escrowId> - Check escrow status");
-  console.log("  release <escrowId> - Manually release to seller");
-  console.log("  refund <escrowId> - Manually refund to buyer");
+  console.log("  release <escrowId> - Manually release to provider");
+  console.log("  refund <escrowId> - Manually refund to submitter");
   console.log("  moltbook - Toggle Moltbook heartbeat");
   console.log("  quit - Exit agent\n");
 
@@ -153,8 +153,8 @@ async function pollEvents(contract) {
     for (const event of createdEvents) {
       console.log(`\n[Event] New escrow created!`);
       console.log(`  ID: #${event.escrowId}`);
-      console.log(`  Buyer: ${event.buyer}`);
-      console.log(`  Seller: ${event.seller}`);
+      console.log(`  Submitter: ${event.buyer}`);
+      console.log(`  Provider: ${event.seller}`);
       console.log(`  Amount: ${event.amount.toString()} wei`);
       console.log(`  Task CID: ${event.taskCID}`);
       console.log(`  Deadline: ${new Date(event.deadline * 1000).toISOString()}`);
@@ -226,10 +226,10 @@ async function handleVerify(contract, escrowId, deliverableCID) {
   const result = await verifyDeliverable(requirements, deliverable);
 
   if (result.approved && result.confidence >= 70) {
-    console.log(`[Verify] ✓ Approved! Releasing funds to seller...`);
+    console.log(`[Verify] ✓ Approved! Releasing funds to provider...`);
     await contract.release(escrowId);
   } else {
-    console.log(`[Verify] ✗ Rejected. Refunding buyer...`);
+    console.log(`[Verify] ✗ Rejected. Refunding submitter...`);
     await contract.refund(escrowId);
   }
 }
@@ -256,8 +256,8 @@ async function handleStatus(contract, escrowId) {
 
   console.log(`\n[Escrow #${escrowId}]`);
   console.log(`  Status: ${statusName}`);
-  console.log(`  Buyer: ${escrow.buyer}`);
-  console.log(`  Seller: ${escrow.seller}`);
+  console.log(`  Submitter: ${escrow.buyer}`);
+  console.log(`  Provider: ${escrow.seller}`);
   console.log(`  Amount: ${escrow.amount.toString()} wei`);
   console.log(`  Task CID: ${escrow.taskCID}`);
   console.log(`  Deadline: ${new Date(Number(escrow.deadline) * 1000).toISOString()}`);

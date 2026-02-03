@@ -314,7 +314,7 @@ export default function CreateEscrowPage() {
 
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
-            Seller Address
+            Provider Address
           </label>
           <input
             type="text"
@@ -324,7 +324,7 @@ export default function CreateEscrowPage() {
             className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
           />
           <p className="text-gray-500 text-sm mt-1">
-            The wallet address that will receive payment
+            The provider's wallet address
           </p>
         </div>
 

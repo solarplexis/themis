@@ -39,7 +39,7 @@ export function EscrowCard({ escrow }: { escrow: Escrow }) {
         </div>
 
         <div className="flex justify-between">
-          <span className="text-slate-400">Buyer</span>
+          <span className="text-slate-400">Submitter</span>
           <a
             href={`https://sepolia.etherscan.io/address/${escrow.buyer}`}
             target="_blank"
@@ -51,7 +51,7 @@ export function EscrowCard({ escrow }: { escrow: Escrow }) {
         </div>
 
         <div className="flex justify-between">
-          <span className="text-slate-400">Seller</span>
+          <span className="text-slate-400">Provider</span>
           <a
             href={`https://sepolia.etherscan.io/address/${escrow.seller}`}
             target="_blank"

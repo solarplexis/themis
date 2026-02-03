@@ -162,11 +162,20 @@ export class MoltbookClient {
         const posts = result.recentPosts || [];
         console.log(`[Moltbook] Found ${posts.length} recent posts`);
         
+        // Normalize author field — API returns { id, name } object or may be absent
+        for (const post of posts) {
+          if (post.author && typeof post.author === "object") {
+            post.author = post.author.name || "unknown";
+          } else if (!post.author) {
+            post.author = "unknown";
+          }
+        }
+
         // Filter for posts that mention this agent (excluding own posts)
         const mentionPattern = new RegExp(`@${this.username}`, "i");
         const mentions = posts.filter((post) => {
           const content = post.content || post.title || "";
-          return mentionPattern.test(content);
+          return mentionPattern.test(content) && post.author !== this.username;
         });
         
         console.log(`[Moltbook] Found ${mentions.length} mentions`);
@@ -245,6 +254,7 @@ export class MoltbookClient {
    */
   parseEscrowRequest(content) {
     const lines = content.toLowerCase().split("\n");
+    const originalLines = content.split("\n");
 
     // Check if this is an escrow request
     if (!content.toLowerCase().includes("@themis") || !content.toLowerCase().includes("escrow")) {
@@ -253,17 +263,20 @@ export class MoltbookClient {
 
     const request = {
       type: "escrow",
-      seller: null,
+      provider: null,
       amount: null,
       token: "ETH",
       requirements: null,
       deadline: null,
     };
 
-    for (const line of lines) {
-      if (line.includes("seller:")) {
-        const match = line.match(/@(\w+)/);
-        request.seller = match ? match[1] : null;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const originalLine = originalLines[i];
+      if (line.includes("provider:") || line.includes("seller:")) {
+        // Expect a 0x address
+        const match = originalLine.match(/(0x[0-9a-fA-F]{40})/);
+        request.provider = match ? match[1] : null;
       }
       if (line.includes("amount:")) {
         const match = line.match(/([\d.]+)\s*(molt|eth)/i);
@@ -273,8 +286,8 @@ export class MoltbookClient {
         }
       }
       if (line.includes("requirements:") || line.includes("ipfs://")) {
-        const match = line.match(/ipfs:\/\/(\w+)/);
-        request.requirements = match ? `ipfs://${match[1]}` : line.split(":").slice(1).join(":").trim();
+        const match = originalLine.match(/ipfs:\/\/(\w+)/);
+        request.requirements = match ? `ipfs://${match[1]}` : originalLine.split(":").slice(1).join(":").trim();
       }
       if (line.includes("deadline:")) {
         request.deadline = line.split(":").slice(1).join(":").trim();
@@ -349,8 +362,8 @@ export function formatEscrowConfirmation(escrowId, buyer, seller, amount, token,
   return `## Escrow Initiated ✓
 
 **Escrow ID**: #${escrowId}
-**Buyer**: @${buyer}
-**Seller**: @${seller}
+**Submitter**: @${buyer}
+**Provider**: @${seller}
 **Amount**: ${amount} ${token}
 
 ### Next Steps
@@ -362,7 +375,7 @@ Contract: ${contractAddress}
 Function: createEscrowETH (or createEscrowERC20)
 \`\`\`
 
-I'll confirm once funds are received and notify @${seller} to begin work.
+I'll confirm once funds are received and notify the provider to begin work.
 
 ---
 *Secured by Themis | [View Contract](https://sepolia.etherscan.io/address/${contractAddress})*`;
@@ -379,7 +392,7 @@ export function formatVerificationResult(escrowId, approved, reason, txHash) {
 
 ${reason}
 
-Payment has been released to the seller.
+Payment has been released to the provider.
 
 [View Transaction](https://sepolia.etherscan.io/tx/${txHash})
 
@@ -392,7 +405,7 @@ Payment has been released to the seller.
 
 ${reason}
 
-Funds have been refunded to the buyer.
+Funds have been refunded to the submitter.
 
 [View Transaction](https://sepolia.etherscan.io/tx/${txHash})
 

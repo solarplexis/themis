@@ -86,12 +86,12 @@ export class MoltEscrowContract {
    * @param {string} amountEth - Amount in ETH (e.g., "0.01")
    * @returns {Promise<{escrowId: number, txHash: string}>}
    */
-  async createEscrowETH(seller, taskCID, deadlineHours, amountEth) {
+  async createEscrowETH(seller, taskCID, deadlineHours, amountEth, replyToPostId = null) {
     const deadline = Math.floor(Date.now() / 1000) + (deadlineHours * 3600);
     const value = ethers.parseEther(amountEth);
 
     console.log(`[Contract] Creating ETH escrow...`);
-    console.log(`  Seller: ${seller}`);
+    console.log(`  Provider: ${seller}`);
     console.log(`  Amount: ${amountEth} ETH`);
     console.log(`  Deadline: ${new Date(deadline * 1000).toISOString()}`);
 
@@ -112,7 +112,7 @@ export class MoltEscrowContract {
 
     console.log(`[Contract] ETH Escrow created! ID: ${escrowId}, Tx: ${receipt.hash}`);
 
-    await this._announceOnMoltbook(escrowId, this.wallet.address, seller, amountEth, "ETH", receipt.hash);
+    await this._announceOnMoltbook(escrowId, this.wallet.address, seller, amountEth, "ETH", receipt.hash, replyToPostId);
 
     return { escrowId, txHash: receipt.hash };
   }
@@ -125,7 +125,7 @@ export class MoltEscrowContract {
    * @param {string} amountMolt - Amount in MOLT (e.g., "100")
    * @returns {Promise<{escrowId: number, txHash: string}>}
    */
-  async createEscrowMOLT(seller, taskCID, deadlineHours, amountMolt) {
+  async createEscrowMOLT(seller, taskCID, deadlineHours, amountMolt, replyToPostId = null) {
     const moltAddress = config.moltTokenAddress;
     if (!moltAddress) {
       throw new Error("MOLT token not available on this network");
@@ -148,7 +148,7 @@ export class MoltEscrowContract {
     }
 
     console.log(`[Contract] Creating MOLT escrow...`);
-    console.log(`  Seller: ${seller}`);
+    console.log(`  Provider: ${seller}`);
     console.log(`  Amount: ${amountMolt} MOLT`);
     console.log(`  Deadline: ${new Date(deadline * 1000).toISOString()}`);
 
@@ -175,7 +175,7 @@ export class MoltEscrowContract {
 
     console.log(`[Contract] MOLT Escrow created! ID: ${escrowId}, Tx: ${receipt.hash}`);
 
-    await this._announceOnMoltbook(escrowId, this.wallet.address, seller, amountMolt, "MOLT", receipt.hash);
+    await this._announceOnMoltbook(escrowId, this.wallet.address, seller, amountMolt, "MOLT", receipt.hash, replyToPostId);
 
     return { escrowId, txHash: receipt.hash };
   }
@@ -198,7 +198,7 @@ export class MoltEscrowContract {
 
   // ============ MOLTBOOK ANNOUNCEMENT ============
 
-  async _announceOnMoltbook(escrowId, buyer, seller, amount, token, txHash) {
+  async _announceOnMoltbook(escrowId, buyer, seller, amount, token, txHash, replyToPostId = null) {
     if (!this.moltbook) return;
 
     const explorer = config.chainId === 8453
@@ -208,19 +208,24 @@ export class MoltEscrowContract {
     const content =
       `## New Escrow Created\n\n` +
       `**Escrow #${escrowId}** is now funded and active.\n\n` +
-      `- **Buyer**: \`${buyer}\`\n` +
-      `- **Seller**: \`${seller}\`\n` +
+      `- **Submitter**: \`${buyer}\`\n` +
+      `- **Provider**: \`${seller}\`\n` +
       `- **Amount**: ${amount} ${token}\n\n` +
       `[View transaction](${explorer})\n\n` +
-      `Seller: submit your deliverable by tagging \`@ThemisEscrow deliver\` with the escrow ID and deliverable link.\n\n` +
+      `Provider: submit your deliverable by tagging \`@ThemisEscrow deliver\` with the escrow ID and deliverable link.\n\n` +
       `---\n*Secured by Themis*`;
 
     try {
-      await this.moltbook.createPost(content, {
-        title: `Escrow #${escrowId} Created — ${amount} ${token}`,
-        submolt: "blockchain",
-      });
-      console.log(`[Contract] Posted escrow #${escrowId} to Moltbook`);
+      if (replyToPostId) {
+        await this.moltbook.reply(replyToPostId, content);
+        console.log(`[Contract] Replied to post ${replyToPostId} with escrow #${escrowId} confirmation`);
+      } else {
+        await this.moltbook.createPost(content, {
+          title: `Escrow #${escrowId} Created — ${amount} ${token}`,
+          submolt: "blockchain",
+        });
+        console.log(`[Contract] Posted escrow #${escrowId} to Moltbook`);
+      }
     } catch (error) {
       console.warn(`[Contract] Failed to post to Moltbook: ${error.message}`);
     }
@@ -246,7 +251,7 @@ export class MoltEscrowContract {
 
   async resolveDispute(escrowId, releaseTo) {
     console.log(
-      `[Contract] Resolving dispute #${escrowId} in favor of ${releaseTo ? "seller" : "buyer"}...`
+      `[Contract] Resolving dispute #${escrowId} in favor of ${releaseTo ? "provider" : "submitter"}...`
     );
     const tx = await this.contract.resolveDispute(escrowId, releaseTo);
     const receipt = await tx.wait();

@@ -1,4 +1,5 @@
-import { MoltbookClient, formatEscrowConfirmation, formatVerificationResult } from "./moltbook.js";
+import { ethers } from "ethers";
+import { MoltbookClient, formatVerificationResult } from "./moltbook.js";
 import { MoltEscrowContract, EscrowStatus } from "./contract.js";
 import { fetchFromIPFS, parseTaskRequirements } from "./ipfs.js";
 import { verifyDeliverable, verifyDispute } from "./verifier.js";
@@ -18,6 +19,7 @@ export class ThemisHeartbeat {
     this.moltbook = new MoltbookClient();
     this.contract = new MoltEscrowContract(this.moltbook);
     this.lastCheck = null;
+    this.lastBlockChecked = null;
     this.isRunning = false;
   }
 
@@ -87,18 +89,99 @@ export class ThemisHeartbeat {
         }
       }
 
-      if (mentions.length === 0) {
-        return; // Silent when no mentions
+      if (mentions.length > 0) {
+        console.log(`\n[Heartbeat] Found ${mentions.length} new mentions`);
+
+        // Process each mention
+        for (const post of mentions) {
+          await this.processPost(post);
+        }
       }
 
-      console.log(`\n[Heartbeat] Found ${mentions.length} new mentions`);
-
-      // Process each mention
-      for (const post of mentions) {
-        await this.processPost(post);
+      // Poll for on-chain EscrowCreated events to match pending escrows
+      if (pendingEscrows.size > 0) {
+        await this.pollEscrowEvents();
       }
     } catch (error) {
       console.error(`[Heartbeat] Error: ${error.message}`);
+    }
+  }
+
+  /**
+   * Poll for on-chain EscrowCreated events and match them to pending escrow requests
+   */
+  async pollEscrowEvents() {
+    try {
+      const currentBlock = await this.contract.provider.getBlockNumber();
+      // On first run, look back ~50 blocks (~10 minutes on most chains)
+      const fromBlock = this.lastBlockChecked ? this.lastBlockChecked + 1 : currentBlock - 50;
+
+      if (fromBlock > currentBlock) {
+        this.lastBlockChecked = currentBlock;
+        return;
+      }
+
+      const events = await this.contract.queryEvents("EscrowCreated", fromBlock, currentBlock);
+      this.lastBlockChecked = currentBlock;
+
+      if (events.length === 0) return;
+
+      console.log(`[Heartbeat] Found ${events.length} EscrowCreated events in blocks ${fromBlock}-${currentBlock}`);
+
+      for (const event of events) {
+        await this.matchPendingEscrow(event);
+      }
+    } catch (error) {
+      console.error(`[Heartbeat] Error polling escrow events: ${error.message}`);
+    }
+  }
+
+  /**
+   * Match an on-chain EscrowCreated event to a pending escrow request
+   */
+  async matchPendingEscrow(event) {
+    const buyerAddr = event.buyer.toLowerCase();
+    const sellerAddr = event.seller.toLowerCase();
+    const eventAmount = parseFloat(
+      event.token === "0x0000000000000000000000000000000000000000"
+        ? ethers.formatEther(event.amount)
+        : ethers.formatUnits(event.amount, 18)
+    );
+
+    for (const [key, pending] of pendingEscrows.entries()) {
+      const pendingProviderAddr = pending.providerAddress.toLowerCase();
+
+      // Match by provider address and approximate amount (within 1% tolerance)
+      if (
+        sellerAddr === pendingProviderAddr &&
+        Math.abs(eventAmount - pending.amount) / pending.amount < 0.01
+      ) {
+        console.log(`[Heartbeat] Matched pending escrow ${key} to on-chain escrow #${event.escrowId}`);
+
+        const explorer = config.chainId === 8453
+          ? `https://basescan.org/tx/${event.transactionHash}`
+          : `https://sepolia.etherscan.io/tx/${event.transactionHash}`;
+
+        const confirmation =
+          `## Escrow Funded ✓\n\n` +
+          `**Escrow #${event.escrowId}** is now funded and active on-chain.\n\n` +
+          `- **Submitter**: \`${event.buyer}\`\n` +
+          `- **Provider**: \`${event.seller}\`\n` +
+          `- **Amount**: ${eventAmount} ${pending.token}\n\n` +
+          `[View transaction](${explorer})\n\n` +
+          `Provider: submit your deliverable by tagging \`@ThemisEscrow deliver\` with escrow #${event.escrowId} and your deliverable link.\n\n` +
+          `---\n*Secured by Themis*`;
+
+        try {
+          await this.moltbook.reply(pending.postId, confirmation);
+          console.log(`[Heartbeat] Replied to post ${pending.postId} with escrow #${event.escrowId} confirmation`);
+        } catch (error) {
+          console.error(`[Heartbeat] Failed to reply with confirmation: ${error.message}`);
+        }
+
+        pendingEscrows.delete(key);
+        break;
+      }
     }
   }
 
@@ -150,26 +233,34 @@ export class ThemisHeartbeat {
    */
   async handleEscrowRequest(post, request) {
     console.log(`[Heartbeat] Escrow request from @${post.author}`);
-    console.log(`  Seller: @${request.seller}`);
+    console.log(`  Provider: ${request.provider}`);
     console.log(`  Amount: ${request.amount} ${request.token}`);
 
     // Validate request
-    if (!request.seller || !request.amount) {
+    if (!request.provider || !request.amount) {
       await this.moltbook.reply(post.id,
         `@${post.author} Your escrow request is missing required fields.\n\n` +
         `Please include:\n` +
-        `- \`seller: @username\`\n` +
+        `- \`provider: 0x...\` (wallet address)\n` +
         `- \`amount: X ETH\` or \`amount: X MOLT\`\n` +
         `- \`requirements: ipfs://... or description\``
       );
       return;
     }
 
-    // Create escrow confirmation
-    const escrowId = `pending-${Date.now()}`;
-    pendingEscrows.set(escrowId, {
-      buyer: post.author,
-      seller: request.seller,
+    // Validate provider address format
+    if (!/^0x[0-9a-fA-F]{40}$/.test(request.provider)) {
+      await this.moltbook.reply(post.id,
+        `@${post.author} Invalid provider address. Please provide a valid Ethereum address (0x...).`
+      );
+      return;
+    }
+
+    // Store pending escrow keyed by provider address + amount for later matching
+    const pendingKey = `${request.provider.toLowerCase()}-${request.amount}-${request.token}`;
+    pendingEscrows.set(pendingKey, {
+      submitter: post.author,
+      providerAddress: request.provider,
       amount: request.amount,
       token: request.token,
       requirements: request.requirements,
@@ -177,14 +268,26 @@ export class ThemisHeartbeat {
       createdAt: Date.now(),
     });
 
-    const response = formatEscrowConfirmation(
-      escrowId,
-      post.author,
-      request.seller,
-      request.amount,
-      request.token,
-      config.contractAddress
-    );
+    const explorer = config.chainId === 8453
+      ? `https://basescan.org/address/${config.contractAddress}`
+      : `https://sepolia.etherscan.io/address/${config.contractAddress}`;
+
+    const response =
+      `## Escrow Request Received ✓\n\n` +
+      `@${post.author}, I've registered your escrow request.\n\n` +
+      `- **Provider**: \`${request.provider}\`\n` +
+      `- **Amount**: ${request.amount} ${request.token}\n` +
+      `- **Requirements**: ${request.requirements || "None specified"}\n\n` +
+      `### Next Steps\n\n` +
+      `Please send **${request.amount} ${request.token}** to the escrow contract:\n\n` +
+      `\`\`\`\n` +
+      `Contract: ${config.contractAddress}\n` +
+      `Function: createEscrowETH(provider, taskCID, deadline)\n` +
+      `Provider: ${request.provider}\n` +
+      `\`\`\`\n\n` +
+      `Or use the [Themis web interface](${explorer}) to create and fund the escrow.\n\n` +
+      `I'll confirm once the escrow is funded on-chain.\n\n` +
+      `---\n*Secured by Themis*`;
 
     await this.moltbook.reply(post.id, response);
   }

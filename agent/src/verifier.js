@@ -101,16 +101,16 @@ ${JSON.stringify(requirements, null, 2)}
 ## Delivered Work
 ${JSON.stringify(deliverable, null, 2)}
 
-## Buyer's Complaint
+## Submitter's Complaint
 ${buyerClaim || "No specific complaint provided"}
 
-## Seller's Defense
+## Provider's Defense
 ${sellerClaim || "No defense provided"}
 
 ## Your Task
 Determine who should receive the escrowed funds. Consider:
-1. Did the seller deliver what was promised?
-2. Is the buyer's complaint valid?
+1. Did the provider deliver what was promised?
+2. Is the submitter's complaint valid?
 3. Who acted in good faith?
 
 ## Response Format
@@ -136,6 +136,6 @@ Respond with ONLY a JSON object:
   const jsonMatch = response.choices[0].message.content.match(/\{[\s\S]*\}/);
   const result = JSON.parse(jsonMatch[0]);
 
-  console.log(`[Verifier] Dispute ruling: ${result.favorSeller ? "SELLER" : "BUYER"}`);
+  console.log(`[Verifier] Dispute ruling: ${result.favorSeller ? "PROVIDER" : "SUBMITTER"}`);
   return result;
 }

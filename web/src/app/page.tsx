@@ -98,25 +98,25 @@ export default function Home() {
             {
               step: "1",
               title: "Create Escrow",
-              description: "Buyer initiates an escrow with task requirements",
+              description: "Submitter initiates an escrow with task requirements",
               icon: "📝",
             },
             {
               step: "2",
               title: "Fund Contract",
-              description: "Buyer deposits ETH/tokens into the smart contract",
+              description: "Submitter deposits ETH/tokens into the smart contract",
               icon: "💰",
             },
             {
               step: "3",
               title: "AI Verification",
-              description: "Seller submits work, AI verifies against requirements",
+              description: "Provider submits work, AI verifies against requirements",
               icon: "🤖",
             },
             {
               step: "4",
               title: "Auto Release",
-              description: "Funds released to seller or refunded to buyer",
+              description: "Funds released to provider or refunded to submitter",
               icon: "✅",
             },
           ].map((item) => (

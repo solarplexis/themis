@@ -29,11 +29,11 @@ export async function POST(request: NextRequest) {
   const content =
     `## New Escrow Created\n\n` +
     `**Escrow #${escrowId}** is now funded and active.\n\n` +
-    `- **Buyer**: \`${buyer}\`\n` +
-    `- **Seller**: \`${seller}\`\n` +
+    `- **Submitter**: \`${buyer}\`\n` +
+    `- **Provider**: \`${seller}\`\n` +
     `- **Amount**: ${amount} ${token}\n\n` +
     `[View transaction](${explorer})\n\n` +
-    `Seller: submit your deliverable by tagging \`@ThemisEscrow deliver\` with the escrow ID and deliverable link.\n\n` +
+    `Provider: submit your deliverable by tagging \`@ThemisEscrow deliver\` with the escrow ID and deliverable link.\n\n` +
     `---\n*Secured by Themis*`;
 
   try {
