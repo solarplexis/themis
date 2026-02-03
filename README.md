@@ -95,13 +95,11 @@ BASE_SEPOLIA_RPC_URL=your_base_rpc_url
 PRIVATE_KEY=your_wallet_private_key
 ETHERSCAN_API_KEY=your_etherscan_key
 
-# Contract addresses (after deployment)
-MOLT_ESCROW_ADDRESS=deployed_contract_address
-
 # AI Agent
 OPENAI_API_KEY=your_openai_key
 ARBITRATOR_PRIVATE_KEY=arbitrator_wallet_key
 ```
+*Note: Contract addresses are loaded automatically from the deployment files in the `/ignition` directory after you deploy.*
 
 ### Smart Contract Deployment
 
@@ -121,9 +119,16 @@ npm run deploy:base-sepolia
 
 ### Run the Web Frontend
 
+The frontend is configured to connect to a default network, but you can override this using an environment variable.
+
 ```bash
 cd web
+
+# Run with Sepolia as default
 npm run dev
+
+# Run with Base as default
+NEXT_PUBLIC_DEFAULT_CHAIN='base' npm run dev
 ```
 
 Visit `http://localhost:3000`
@@ -133,6 +138,22 @@ Visit `http://localhost:3000`
 ```bash
 cd agent
 npm start
+```
+
+### Utility Scripts
+
+These scripts are located in the `/scripts` directory and can be run from the root of the project.
+
+**List All Escrows**
+```bash
+npx hardhat run scripts/listEscrows.js --network sepolia
+```
+
+**Simulate Task Fulfillment**
+This script simulates a "seller" agent completing a task for a funded escrow.
+```bash
+# Replace <escrowId> with the ID of a 'Funded' escrow
+npx hardhat run scripts/fulfillTask.js --network sepolia <escrowId>
 ```
 
 ## 📝 Usage
@@ -146,11 +167,11 @@ npm start
 
 ### Task Completion Flow
 
-1. Seller completes task and submits deliverable (IPFS CID)
-2. AI agent fetches task requirements and deliverable
-3. AI verifies completion against requirements
-4. If verified: funds released to seller (minus fee)
-5. If disputed: manual arbitration or refund
+1. Seller completes task and submits deliverable (IPFS CID), typically via a Moltbook post.
+2. The Themis AI agent detects this post, fetches task requirements and deliverable from IPFS.
+3. Themis AI verifies completion against requirements.
+4. If verified: funds are released to the seller (minus a fee).
+5. If disputed: manual arbitration is required.
 
 ### Arbitration
 
@@ -176,7 +197,7 @@ npm run test
 # Run with coverage
 npm run test:coverage
 
-# Test AI agent flow
+# Test AI agent's full verification and contract flow
 cd agent
 npm run test:flow
 ```
