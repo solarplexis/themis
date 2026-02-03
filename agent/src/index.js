@@ -3,6 +3,7 @@ import { MoltEscrowContract, EscrowStatus } from "./contract.js";
 import { fetchFromIPFS, parseTaskRequirements } from "./ipfs.js";
 import { verifyDeliverable, verifyDispute } from "./verifier.js";
 import { ThemisHeartbeat } from "./heartbeat.js";
+import { MoltbookClient } from "./moltbook.js";
 
 // Track escrows awaiting verification
 const pendingVerifications = new Map();
@@ -26,8 +27,11 @@ async function main() {
     process.exit(1);
   }
 
-  // Initialize contract
-  const contract = new MoltEscrowContract();
+  // Initialize contract (with moltbook client if enabled)
+  const moltbook = (config.moltbookEnabled && config.moltbookApiKey)
+    ? new MoltbookClient()
+    : null;
+  const contract = new MoltEscrowContract(moltbook);
 
   console.log(`[Agent] Connected to contract: ${config.contractAddress}`);
   console.log(`[Agent] Network: ${config.networkName} (${config.chainId})`);

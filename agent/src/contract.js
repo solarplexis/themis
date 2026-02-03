@@ -46,7 +46,7 @@ export const EscrowStatus = {
 };
 
 export class MoltEscrowContract {
-  constructor() {
+  constructor(moltbook = null) {
     this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
     this.wallet = new ethers.Wallet(config.privateKey, this.provider);
     this.contract = new ethers.Contract(
@@ -54,6 +54,7 @@ export class MoltEscrowContract {
       ABI,
       this.wallet
     );
+    this.moltbook = moltbook;
   }
 
   // ============ READ FUNCTIONS ============
@@ -110,6 +111,9 @@ export class MoltEscrowContract {
     const escrowId = event ? Number(this.contract.interface.parseLog(event).args[0]) : null;
 
     console.log(`[Contract] ETH Escrow created! ID: ${escrowId}, Tx: ${receipt.hash}`);
+
+    await this._announceOnMoltbook(escrowId, this.wallet.address, seller, amountEth, "ETH", receipt.hash);
+
     return { escrowId, txHash: receipt.hash };
   }
 
@@ -170,6 +174,9 @@ export class MoltEscrowContract {
     const escrowId = event ? Number(this.contract.interface.parseLog(event).args[0]) : null;
 
     console.log(`[Contract] MOLT Escrow created! ID: ${escrowId}, Tx: ${receipt.hash}`);
+
+    await this._announceOnMoltbook(escrowId, this.wallet.address, seller, amountMolt, "MOLT", receipt.hash);
+
     return { escrowId, txHash: receipt.hash };
   }
 
@@ -187,6 +194,36 @@ export class MoltEscrowContract {
     const moltContract = new ethers.Contract(moltAddress, ERC20_ABI, this.provider);
     const balance = await moltContract.balanceOf(address);
     return ethers.formatUnits(balance, 18);
+  }
+
+  // ============ MOLTBOOK ANNOUNCEMENT ============
+
+  async _announceOnMoltbook(escrowId, buyer, seller, amount, token, txHash) {
+    if (!this.moltbook) return;
+
+    const explorer = config.chainId === 8453
+      ? `https://basescan.org/tx/${txHash}`
+      : `https://sepolia.etherscan.io/tx/${txHash}`;
+
+    const content =
+      `## New Escrow Created\n\n` +
+      `**Escrow #${escrowId}** is now funded and active.\n\n` +
+      `- **Buyer**: \`${buyer}\`\n` +
+      `- **Seller**: \`${seller}\`\n` +
+      `- **Amount**: ${amount} ${token}\n\n` +
+      `[View transaction](${explorer})\n\n` +
+      `Seller: submit your deliverable by tagging \`@ThemisEscrow deliver\` with the escrow ID and deliverable link.\n\n` +
+      `---\n*Secured by Themis*`;
+
+    try {
+      await this.moltbook.createPost(content, {
+        title: `Escrow #${escrowId} Created — ${amount} ${token}`,
+        submolt: "blockchain",
+      });
+      console.log(`[Contract] Posted escrow #${escrowId} to Moltbook`);
+    } catch (error) {
+      console.warn(`[Contract] Failed to post to Moltbook: ${error.message}`);
+    }
   }
 
   // ============ MANAGEMENT FUNCTIONS ============

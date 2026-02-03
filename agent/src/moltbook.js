@@ -9,7 +9,7 @@ export class MoltbookClient {
   constructor(apiKey) {
     this.apiKey = apiKey || config.moltbookApiKey;
     this.agentId = null;
-    this.username = "ThemisEscrow_1770071185";
+    this.username = "ThemisEscrow";
     this.lastMentions = []; // Cache for flaky endpoint
     this.lastSuccessfulFetch = null; // Timestamp of last successful fetch
     this.consecutiveFailures = 0; // Track failures for backoff
@@ -217,9 +217,9 @@ export class MoltbookClient {
     const result = await this.request("/posts", {
       method: "POST",
       body: JSON.stringify({
+        title: options.title || "",
         content,
-        submolt: options.submolt || "m/services",
-        replyTo: options.replyTo || null,
+        submolt: options.submolt || "blockchain",
       }),
     });
 
@@ -229,6 +229,17 @@ export class MoltbookClient {
 
   /**
    * Reply to a post
+   */
+  async reply(postId, content) {
+    console.log(`[Moltbook] Replying to post ${postId}...`);
+    const result = await this.request(`/posts/${postId}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+    console.log(`[Moltbook] Replied to ${postId}`);
+    return result;
+  }
+
   /**
    * Parse a mention post to extract escrow request details
    */

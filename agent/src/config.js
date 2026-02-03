@@ -1,25 +1,47 @@
 import dotenv from "dotenv";
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
+import fs from "fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Load .env from parent directory (themis root)
 dotenv.config({ path: resolve(__dirname, "../../.env") });
 
+// Helper to read deployed contract address from ignition files
+function getContractAddress(chainId) {
+  const deploymentFile = resolve(
+    __dirname,
+    `../../ignition/deployments/chain-${chainId}/deployed_addresses.json`
+  );
+  try {
+    if (fs.existsSync(deploymentFile)) {
+      const addresses = JSON.parse(fs.readFileSync(deploymentFile, "utf8"));
+      // The key is typically in the format "ModuleName#ContractName"
+      const addressKey = Object.keys(addresses).find(key => key.includes("#MoltEscrow"));
+      if (addressKey) {
+        return addresses[addressKey];
+      }
+    }
+  } catch (error) {
+    console.error(`[Config] Error reading deployment file for chainId ${chainId}:`, error);
+  }
+  return null;
+}
+
 // Network configuration
 const NETWORKS = {
   sepolia: {
     rpcUrl: process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com",
     privateKey: process.env.TESTNET_PRIVATE_KEY,
-    contractAddress: "0x3f1c8Af6BDaA7e184EcA1797749E87A8345E0471",
+    contractAddress: getContractAddress(11155111),
     chainId: 11155111,
     name: "Sepolia",
   },
   base: {
     rpcUrl: process.env.BASE_RPC_URL || "https://mainnet.base.org",
     privateKey: process.env.MAINNET_PRIVATE_KEY,
-    contractAddress: "0x7D32f54652237A6c73a2F93b63623d07B7Ccb2Cb",
+    contractAddress: getContractAddress(8453),
     chainId: 8453,
     name: "Base",
   },

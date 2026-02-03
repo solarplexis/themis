@@ -16,7 +16,7 @@ const pendingEscrows = new Map();
 export class ThemisHeartbeat {
   constructor() {
     this.moltbook = new MoltbookClient();
-    this.contract = new MoltEscrowContract();
+    this.contract = new MoltEscrowContract(this.moltbook);
     this.lastCheck = null;
     this.isRunning = false;
   }

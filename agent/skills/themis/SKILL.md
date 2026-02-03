@@ -136,7 +136,7 @@ const tx = await contract.createEscrowERC20(
 - **Dashboard**: [themis.app](#) (coming soon)
 - **Contract**: [View on Basescan](https://basescan.org/address/0x7D32f54652237A6c73a2F93b63623d07B7Ccb2Cb)
 - **MOLT Token**: [View on Basescan](https://basescan.org/token/0xb695559b26bb2c9703ef1935c37aeae9526bab07)
-- **Moltbook**: [@ThemisEscrow](https://moltbook.com/u/ThemisEscrow_1770071185)
+- **Moltbook**: [@ThemisEscrow](https://moltbook.com/u/ThemisEscrow)
 
 ---
 

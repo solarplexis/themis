@@ -8,7 +8,7 @@ import {
   useReadContract,
   useChainId,
 } from "wagmi";
-import { parseEther, parseUnits, formatUnits } from "viem";
+import { parseEther, parseUnits, formatUnits, decodeEventLog, formatEther } from "viem";
 import { base } from "wagmi/chains";
 import {
   CONTRACTS,
@@ -30,6 +30,7 @@ export default function CreateEscrowPage() {
   const [paymentToken, setPaymentToken] = useState<PaymentToken>("ETH");
   const [needsApproval, setNeedsApproval] = useState(false);
   const [approvalStep, setApprovalStep] = useState(false);
+  const [moltbookStatus, setMoltbookStatus] = useState<"idle" | "posting" | "posted" | "failed">("idle");
 
   // Get the correct contract address for current chain
   const contractAddress =
@@ -83,7 +84,7 @@ export default function CreateEscrowPage() {
   // Create escrow transaction
   const { data: hash, isPending, writeContract } = useWriteContract();
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+  const { data: receipt, isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
     hash,
   });
 
@@ -94,6 +95,67 @@ export default function CreateEscrowPage() {
       setNeedsApproval(false);
     }
   }, [isApprovalSuccess, approvalStep]);
+
+  // Post to Moltbook after escrow creation succeeds
+  useEffect(() => {
+    if (!isSuccess || !receipt || moltbookStatus !== "idle") return;
+
+    const escrowCreatedEvent = receipt.logs.find((log) => {
+      try {
+        const decoded = decodeEventLog({
+          abi: ESCROW_ABI,
+          data: log.data,
+          topics: log.topics,
+        });
+        return decoded.eventName === "EscrowCreated";
+      } catch {
+        return false;
+      }
+    });
+
+    if (!escrowCreatedEvent) return;
+
+    const decoded = decodeEventLog({
+      abi: ESCROW_ABI,
+      data: escrowCreatedEvent.data,
+      topics: escrowCreatedEvent.topics,
+    });
+
+    const args = decoded.args as {
+      escrowId: bigint;
+      buyer: string;
+      seller: string;
+      token: string;
+      amount: bigint;
+    };
+
+    const isETH = args.token === "0x0000000000000000000000000000000000000000";
+    const displayAmount = isETH
+      ? formatEther(args.amount)
+      : formatUnits(args.amount, 18);
+
+    setMoltbookStatus("posting");
+
+    fetch("/api/moltbook/post", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        escrowId: Number(args.escrowId),
+        buyer: args.buyer,
+        seller: args.seller,
+        amount: displayAmount,
+        token: isETH ? "ETH" : "MOLT",
+        txHash: receipt.transactionHash,
+        chainId,
+      }),
+    })
+      .then((res) => {
+        setMoltbookStatus(res.ok ? "posted" : "failed");
+      })
+      .catch(() => {
+        setMoltbookStatus("failed");
+      });
+  }, [isSuccess, receipt, moltbookStatus, chainId]);
 
   const handleApprove = async () => {
     if (!amount) return;
@@ -189,6 +251,11 @@ export default function CreateEscrowPage() {
           >
             View transaction on {getExplorerName()} →
           </a>
+          <p className="text-gray-400 text-sm mt-4">
+            {moltbookStatus === "posting" && "Posting to Moltbook..."}
+            {moltbookStatus === "posted" && "Posted to Moltbook"}
+            {moltbookStatus === "failed" && "Failed to post to Moltbook"}
+          </p>
         </div>
       </div>
     );

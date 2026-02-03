@@ -31,7 +31,7 @@ export default function Home() {
             Create Escrow
           </Link>
           <a
-            href="https://moltbook.com/u/ThemisEscrow_1770071185"
+            href="https://moltbook.com/u/ThemisEscrow"
             target="_blank"
             rel="noopener noreferrer"
             className="px-6 py-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg font-semibold transition-colors text-white"
