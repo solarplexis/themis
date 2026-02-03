@@ -1,7 +1,7 @@
 import { ethers } from "ethers";
 import { MoltbookClient, formatVerificationResult } from "./moltbook.js";
 import { MoltEscrowContract, EscrowStatus } from "./contract.js";
-import { fetchFromIPFS, parseTaskRequirements } from "./ipfs.js";
+import { fetchFromIPFS, parseTaskRequirements, isIPFSReference } from "./ipfs.js";
 import { verifyDeliverable, verifyDispute } from "./verifier.js";
 import { config } from "./config.js";
 
@@ -329,13 +329,13 @@ export class ThemisHeartbeat {
     let requirements, deliverable;
 
     try {
-      if (escrow.taskCID.startsWith("ipfs://") || escrow.taskCID.startsWith("Qm")) {
+      if (isIPFSReference(escrow.taskCID)) {
         requirements = await fetchFromIPFS(escrow.taskCID);
       } else {
         requirements = parseTaskRequirements(escrow.taskCID);
       }
 
-      if (request.deliverable.startsWith("ipfs://") || request.deliverable.startsWith("Qm")) {
+      if (isIPFSReference(request.deliverable)) {
         deliverable = await fetchFromIPFS(request.deliverable);
       } else {
         deliverable = { description: request.deliverable };

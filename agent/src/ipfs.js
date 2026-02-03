@@ -1,6 +1,15 @@
 import { config } from "./config.js";
 
 /**
+ * Check if a string looks like an IPFS CID or reference
+ */
+export function isIPFSReference(str) {
+  if (!str || typeof str !== "string") return false;
+  const s = str.trim();
+  return s.startsWith("ipfs://") || s.startsWith("Qm") || s.startsWith("bafy");
+}
+
+/**
  * Fetch content from IPFS using multiple gateways as fallback
  * @param {string} cid - IPFS CID (can include ipfs:// prefix)
  * @returns {Promise<string>} - Content from IPFS

@@ -1,6 +1,6 @@
 import { config, validateConfig } from "./config.js";
 import { MoltEscrowContract, EscrowStatus } from "./contract.js";
-import { fetchFromIPFS, parseTaskRequirements } from "./ipfs.js";
+import { fetchFromIPFS, parseTaskRequirements, isIPFSReference } from "./ipfs.js";
 import { verifyDeliverable, verifyDispute } from "./verifier.js";
 import { ThemisHeartbeat } from "./heartbeat.js";
 import { MoltbookClient } from "./moltbook.js";
@@ -201,24 +201,34 @@ async function handleVerify(contract, escrowId, deliverableCID) {
     return;
   }
 
-  // Fetch requirements from IPFS
-  console.log(`[Verify] Fetching requirements from ${escrow.taskCID}...`);
+  // Fetch requirements
   let requirements;
-  try {
-    const requirementsRaw = await fetchFromIPFS(escrow.taskCID);
-    requirements = parseTaskRequirements(requirementsRaw);
-  } catch (error) {
-    console.log(`[Verify] Could not fetch from IPFS, using CID as description`);
-    requirements = { description: escrow.taskCID };
+  if (isIPFSReference(escrow.taskCID)) {
+    console.log(`[Verify] Fetching requirements from IPFS: ${escrow.taskCID}...`);
+    try {
+      const requirementsRaw = await fetchFromIPFS(escrow.taskCID);
+      requirements = parseTaskRequirements(requirementsRaw);
+    } catch (error) {
+      console.log(`[Verify] IPFS fetch failed, using as description`);
+      requirements = { description: escrow.taskCID };
+    }
+  } else {
+    console.log(`[Verify] Requirements: ${escrow.taskCID}`);
+    requirements = parseTaskRequirements(escrow.taskCID);
   }
 
-  // Fetch deliverable from IPFS
-  console.log(`[Verify] Fetching deliverable from ${deliverableCID}...`);
+  // Fetch deliverable
   let deliverable;
-  try {
-    deliverable = await fetchFromIPFS(deliverableCID);
-  } catch (error) {
-    console.log(`[Verify] Could not fetch from IPFS, using CID as description`);
+  if (isIPFSReference(deliverableCID)) {
+    console.log(`[Verify] Fetching deliverable from IPFS: ${deliverableCID}...`);
+    try {
+      deliverable = await fetchFromIPFS(deliverableCID);
+    } catch (error) {
+      console.log(`[Verify] IPFS fetch failed, using as description`);
+      deliverable = { description: deliverableCID };
+    }
+  } else {
+    console.log(`[Verify] Deliverable: ${deliverableCID}`);
     deliverable = { description: deliverableCID };
   }
 
