@@ -3,7 +3,7 @@ import { base, sepolia } from "wagmi/chains";
 
 const defaultChainId = process.env.NEXT_PUBLIC_DEFAULT_CHAIN === "base" ? base.id : sepolia.id;
 const orderedChains =
-  defaultChainId === base.id ? [base, sepolia] : [sepolia, base];
+  defaultChainId === base.id ? ([base, sepolia] as const) : ([sepolia, base] as const);
 
 export const config = getDefaultConfig({
   appName: "Themis - DeFi Arbitrator",
