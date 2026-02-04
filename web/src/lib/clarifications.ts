@@ -17,9 +17,16 @@ export interface EscrowClarifications {
   clarifications: Clarification[];
 }
 
-// Check if we're running on Netlify
-function isNetlify(): boolean {
-  return !!process.env.NETLIFY || !!process.env.NETLIFY_DEV;
+// Check if we're running in a serverless environment (can't write to filesystem)
+function isServerless(): boolean {
+  // In serverless, cwd is usually /var/task and we can't write there
+  // Also check for Netlify/AWS env vars
+  return (
+    process.cwd().startsWith("/var/task") ||
+    !!process.env.AWS_LAMBDA_FUNCTION_NAME ||
+    !!process.env.NETLIFY ||
+    !!process.env.CONTEXT
+  );
 }
 
 // Local file-based storage for development
@@ -55,7 +62,7 @@ export async function getClarifications(
 ): Promise<EscrowClarifications> {
   const key = `escrow-${escrowId}`;
 
-  if (isNetlify()) {
+  if (isServerless()) {
     const store = getStore("clarifications");
     try {
       const data = await store.get(key, { type: "json" });
@@ -79,7 +86,7 @@ export async function getClarifications(
 async function saveClarifications(data: EscrowClarifications): Promise<void> {
   const key = `escrow-${data.escrowId}`;
 
-  if (isNetlify()) {
+  if (isServerless()) {
     const store = getStore("clarifications");
     await store.setJSON(key, data);
   } else {
