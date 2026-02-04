@@ -284,7 +284,8 @@ export class MoltbookClient {
       }),
     });
 
-    console.log(`[Moltbook] Posted: ${result.postId}`);
+    const postId = result.post?.id || result.postId || result.id;
+    console.log(`[Moltbook] Posted: ${postId}`);
     return result;
   }
 

@@ -347,3 +347,27 @@
  4. cd web && npm run dev — start web app
  5. CLI: verify <escrowId> <deliverable> — should call API, not local verification
  6. Check that submolt polling finds mentions (may need a test post on Moltbook)
+
+Status (1:24 pm on 4 Feb 2026)
+The e2e test passed successfully. Here's a summary of what happened:                                                                                                    
+                                                                                                                                                                          
+  E2E Test Results:                                                                                                                                                       
+  1. Escrow #14 created on Sepolia with 0.001 ETH                                                                                                                         
+  2. Arbitrator-signed delivery sent to POST /api/escrow/14/deliver                                                                                                       
+  3. AI verification returned 100% confidence ("The delivered work exactly matches the requirement")                                                                      
+  4. Release tx submitted: 0x66474942...
+  5. On-chain confirmation verified after ~10 seconds — status changed from Funded → Released
+
+  The full flow is now working:
+  - Agent signs "Themis: deliver escrow #<id>" with arbitrator wallet
+  - REST API verifies signature (accepts arbitrator OR seller)
+  - API fetches requirements from taskCID, runs GPT-4o verification
+  - API submits release/refund tx and returns the hash
+  - On-chain state updates
+
+  The architecture is now:
+  Moltbook mention → Agent → REST API → AI Verify → On-chain release/refund
+
+  Instead of the previous:
+  Moltbook mention → Agent → Local AI verify → Agent on-chain tx
+  

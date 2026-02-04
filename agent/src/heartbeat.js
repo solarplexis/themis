@@ -14,6 +14,8 @@ import {
   hasPendingEscrows,
   getEscrowProvider,
   setEscrowProvider,
+  getKV,
+  setKV,
 } from "./db.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -28,7 +30,15 @@ export class ThemisHeartbeat {
     this.contract = new MoltEscrowContract(this.moltbook);
     this.lastCheck = null;
     this.lastBlockChecked = null;
-    this.lastStatusPost = null;
+    // Load lastStatusPost from db (persists across restarts)
+    // If not set, initialize to now so we don't post on first startup
+    const stored = getKV("lastStatusPost");
+    if (stored) {
+      this.lastStatusPost = Number(stored);
+    } else {
+      this.lastStatusPost = Date.now();
+      setKV("lastStatusPost", String(this.lastStatusPost));
+    }
     this.isRunning = false;
   }
 
@@ -282,15 +292,18 @@ export class ThemisHeartbeat {
       });
 
       this.lastStatusPost = Date.now();
+      setKV("lastStatusPost", String(this.lastStatusPost));
       console.log(`[Heartbeat] Posted status update (${escrowCount} escrows, ${funded} active)`);
     } catch (error) {
       // Don't let status post failures block the heartbeat
       if (error.message.includes("429") || error.message.includes("rate")) {
         console.log(`[Heartbeat] Status post rate-limited — will retry next cycle`);
         this.lastStatusPost = Date.now() - (23 * 60 * 60 * 1000);
+        setKV("lastStatusPost", String(this.lastStatusPost));
       } else {
         console.error(`[Heartbeat] Status post failed: ${error.message}`);
         this.lastStatusPost = Date.now() - (23 * 60 * 60 * 1000);
+        setKV("lastStatusPost", String(this.lastStatusPost));
       }
     }
   }

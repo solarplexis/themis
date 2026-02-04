@@ -33,6 +33,11 @@ db.exec(`
     escrow_id INTEGER PRIMARY KEY,
     username TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS kv (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
 `);
 
 // Prepared statements
@@ -50,6 +55,9 @@ const stmts = {
 
   getProvider: db.prepare("SELECT username FROM escrow_providers WHERE escrow_id = ?"),
   setProvider: db.prepare("INSERT OR REPLACE INTO escrow_providers (escrow_id, username) VALUES (?, ?)"),
+
+  getKV: db.prepare("SELECT value FROM kv WHERE key = ?"),
+  setKV: db.prepare("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)"),
 };
 
 // --- Processed Posts ---
@@ -113,6 +121,17 @@ export function getEscrowProvider(escrowId) {
 
 export function setEscrowProvider(escrowId, username) {
   stmts.setProvider.run(escrowId, username);
+}
+
+// --- Key-Value Store ---
+
+export function getKV(key) {
+  const row = stmts.getKV.get(key);
+  return row ? row.value : null;
+}
+
+export function setKV(key, value) {
+  stmts.setKV.run(key, value);
 }
 
 export function closeDb() {
