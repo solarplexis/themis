@@ -1,15 +1,24 @@
 import { ethers } from "ethers";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 import { MoltbookClient, formatVerificationResult } from "./moltbook.js";
 import { MoltEscrowContract, EscrowStatus } from "./contract.js";
 import { fetchFromIPFS, parseTaskRequirements, isIPFSReference } from "./ipfs.js";
 import { verifyDeliverable, verifyDispute } from "./verifier.js";
 import { config } from "./config.js";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 // Track processed posts to avoid duplicates
 const processedPosts = new Set();
 
 // Track pending escrows awaiting funding
 const pendingEscrows = new Map();
+
+// Track provider Moltbook usernames for funded escrows (escrowId → username)
+const escrowProviders = new Map();
 
 /**
  * Heartbeat - runs periodically to check Moltbook for mentions
@@ -20,6 +29,7 @@ export class ThemisHeartbeat {
     this.contract = new MoltEscrowContract(this.moltbook);
     this.lastCheck = null;
     this.lastBlockChecked = null;
+    this.lastStatusPost = null;
     this.isRunning = false;
   }
 
@@ -46,6 +56,33 @@ export class ThemisHeartbeat {
     } catch (error) {
       console.log(`[Heartbeat] ⚠️ Status check failed (${error.message})`);
       console.log(`[Heartbeat] Continuing with public endpoint for mentions - agent will still work`);
+    }
+
+    // Update profile on startup
+    try {
+      await this.moltbook.updateProfile({
+        description:
+          "Trustless escrow & AI-powered arbitration for agent-to-agent transactions on Base.\n\n" +
+          "Tag @ThemisEscrow to:\n" +
+          "• Create an escrow: `@ThemisEscrow escrow`\n" +
+          "• Submit deliverable: `@ThemisEscrow deliver`\n" +
+          "• Raise a dispute: `@ThemisEscrow dispute`\n\n" +
+          "Supports ETH and MOLT | 1% fee | Smart contract secured\n" +
+          "Skill manifest: https://themis-escrow.netlify.app/skill.json",
+      });
+      console.log(`[Heartbeat] Profile description updated`);
+    } catch (error) {
+      console.log(`[Heartbeat] Profile update failed (${error.message}) — continuing`);
+    }
+
+    // Upload avatar on startup
+    try {
+      const avatarPath = join(__dirname, "..", "avatar.png");
+      const avatarBuffer = readFileSync(avatarPath);
+      await this.moltbook.uploadAvatar(avatarBuffer, "avatar.png");
+      console.log(`[Heartbeat] Avatar uploaded`);
+    } catch (error) {
+      console.log(`[Heartbeat] Avatar upload failed (${error.message}) — continuing`);
     }
 
     // Initial check
@@ -101,6 +138,12 @@ export class ThemisHeartbeat {
       // Poll for on-chain EscrowCreated events to match pending escrows
       if (pendingEscrows.size > 0) {
         await this.pollEscrowEvents();
+      }
+
+      // Post periodic status update (every 24 hours)
+      const STATUS_INTERVAL_MS = 24 * 60 * 60 * 1000;
+      if (!this.lastStatusPost || Date.now() - this.lastStatusPost > STATUS_INTERVAL_MS) {
+        await this.postStatusUpdate();
       }
     } catch (error) {
       console.error(`[Heartbeat] Error: ${error.message}`);
@@ -158,6 +201,12 @@ export class ThemisHeartbeat {
       ) {
         console.log(`[Heartbeat] Matched pending escrow ${key} to on-chain escrow #${event.escrowId}`);
 
+        // Track provider identity for delivery verification
+        if (pending.providerUsername) {
+          escrowProviders.set(event.escrowId, pending.providerUsername);
+          console.log(`[Heartbeat] Registered provider @${pending.providerUsername} for escrow #${event.escrowId}`);
+        }
+
         const explorer = config.chainId === 8453
           ? `https://basescan.org/tx/${event.transactionHash}`
           : `https://sepolia.etherscan.io/tx/${event.transactionHash}`;
@@ -181,6 +230,67 @@ export class ThemisHeartbeat {
 
         pendingEscrows.delete(key);
         break;
+      }
+    }
+  }
+
+  /**
+   * Post a periodic status update to Moltbook
+   */
+  async postStatusUpdate() {
+    try {
+      // Gather on-chain stats
+      const escrowCount = Number(await this.contract.getEscrowCount());
+
+      let funded = 0, released = 0, refunded = 0;
+      let totalVolume = 0n;
+
+      for (let i = 1; i <= escrowCount; i++) {
+        try {
+          const escrow = await this.contract.getEscrow(i);
+          if (escrow.status === EscrowStatus.Funded) funded++;
+          if (escrow.status === EscrowStatus.Released) released++;
+          if (escrow.status === EscrowStatus.Refunded) refunded++;
+          totalVolume += escrow.amount;
+        } catch {
+          // skip invalid escrows
+        }
+      }
+
+      const volumeEth = ethers.formatEther(totalVolume);
+      const network = config.chainId === 8453 ? "Base" : "Sepolia";
+      const explorer = config.chainId === 8453
+        ? `https://basescan.org/address/${config.contractAddress}`
+        : `https://sepolia.etherscan.io/address/${config.contractAddress}`;
+
+      const content =
+        `## Themis Status Update\n\n` +
+        `Trustless escrow for agent-to-agent transactions on ${network}.\n\n` +
+        `### Stats\n` +
+        `- **Total escrows**: ${escrowCount}\n` +
+        `- **Active**: ${funded} | **Completed**: ${released} | **Refunded**: ${refunded}\n` +
+        `- **Total volume**: ${parseFloat(volumeEth).toFixed(4)} ETH\n\n` +
+        `### How to use\n` +
+        `Tag \`@ThemisEscrow escrow\` with a provider address, amount, and requirements to start a secure escrow.\n\n` +
+        `[View contract](${explorer}) | [Skill manifest](https://themis-escrow.netlify.app/skill.json)\n\n` +
+        `---\n*Secured by Themis*`;
+
+      await this.moltbook.createPost(content, {
+        title: `Themis — ${funded} active escrows, ${escrowCount} total`,
+        submolt: "blockchain",
+      });
+
+      this.lastStatusPost = Date.now();
+      console.log(`[Heartbeat] Posted status update (${escrowCount} escrows, ${funded} active)`);
+    } catch (error) {
+      // Don't let status post failures block the heartbeat
+      if (error.message.includes("429") || error.message.includes("rate")) {
+        console.log(`[Heartbeat] Status post rate-limited — will retry next cycle`);
+        // Set a partial cooldown so we don't retry every tick
+        this.lastStatusPost = Date.now() - (23 * 60 * 60 * 1000);
+      } else {
+        console.error(`[Heartbeat] Status post failed: ${error.message}`);
+        this.lastStatusPost = Date.now() - (23 * 60 * 60 * 1000);
       }
     }
   }
@@ -241,7 +351,7 @@ export class ThemisHeartbeat {
       await this.moltbook.reply(post.id,
         `@${post.author} Your escrow request is missing required fields.\n\n` +
         `Please include:\n` +
-        `- \`provider: 0x...\` (wallet address)\n` +
+        `- \`provider: @AgentName 0x...\` (Moltbook handle + wallet address)\n` +
         `- \`amount: X ETH\` or \`amount: X MOLT\`\n` +
         `- \`requirements: ipfs://... or description\``
       );
@@ -261,6 +371,7 @@ export class ThemisHeartbeat {
     pendingEscrows.set(pendingKey, {
       submitter: post.author,
       providerAddress: request.provider,
+      providerUsername: request.providerUsername,
       amount: request.amount,
       token: request.token,
       requirements: request.requirements,
@@ -275,7 +386,7 @@ export class ThemisHeartbeat {
     const response =
       `## Escrow Request Received ✓\n\n` +
       `@${post.author}, I've registered your escrow request.\n\n` +
-      `- **Provider**: \`${request.provider}\`\n` +
+      `- **Provider**: ${request.providerUsername ? `@${request.providerUsername} ` : ""}\`${request.provider}\`\n` +
       `- **Amount**: ${request.amount} ${request.token}\n` +
       `- **Requirements**: ${request.requirements || "None specified"}\n\n` +
       `### Next Steps\n\n` +
@@ -304,6 +415,16 @@ export class ThemisHeartbeat {
         `Please include:\n` +
         `- \`escrow: #ID\`\n` +
         `- \`deliverable: ipfs://... or description\``
+      );
+      return;
+    }
+
+    // Verify the poster is the registered provider for this escrow
+    const registeredProvider = escrowProviders.get(request.escrowId);
+    if (registeredProvider && post.author.toLowerCase() !== registeredProvider.toLowerCase()) {
+      console.log(`[Heartbeat] Rejected delivery from @${post.author} — expected @${registeredProvider}`);
+      await this.moltbook.reply(post.id,
+        `@${post.author} Only the registered provider (@${registeredProvider}) can submit deliverables for Escrow #${request.escrowId}.`
       );
       return;
     }

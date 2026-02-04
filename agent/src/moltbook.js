@@ -250,6 +250,49 @@ export class MoltbookClient {
   }
 
   /**
+   * Update the agent's profile on Moltbook
+   */
+  async updateProfile(fields) {
+    console.log(`[Moltbook] Updating profile...`);
+    const result = await this.request("/agents/me", {
+      method: "PATCH",
+      body: JSON.stringify(fields),
+    });
+    console.log(`[Moltbook] Profile updated`);
+    return result;
+  }
+
+  /**
+   * Upload an avatar image for the agent
+   * @param {Buffer} imageBuffer - Image data (JPEG, PNG, GIF, WebP, max 500KB)
+   * @param {string} filename - Filename with extension
+   */
+  async uploadAvatar(imageBuffer, filename) {
+    console.log(`[Moltbook] Uploading avatar (${filename})...`);
+    const formData = new FormData();
+    const blob = new Blob([imageBuffer], { type: `image/${filename.split('.').pop()}` });
+    formData.append("file", blob, filename);
+
+    const url = `${MOLTBOOK_API}/agents/me/avatar`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${this.apiKey}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Avatar upload failed: ${response.status} - ${error}`);
+    }
+
+    const result = await response.json();
+    console.log(`[Moltbook] Avatar uploaded`);
+    return result;
+  }
+
+  /**
    * Parse a mention post to extract escrow request details
    */
   parseEscrowRequest(content) {
@@ -264,6 +307,7 @@ export class MoltbookClient {
     const request = {
       type: "escrow",
       provider: null,
+      providerUsername: null,
       amount: null,
       token: "ETH",
       requirements: null,
@@ -274,9 +318,15 @@ export class MoltbookClient {
       const line = lines[i];
       const originalLine = originalLines[i];
       if (line.includes("provider:") || line.includes("seller:")) {
-        // Expect a 0x address
-        const match = originalLine.match(/(0x[0-9a-fA-F]{40})/);
-        request.provider = match ? match[1] : null;
+        // Extract wallet address
+        const addrMatch = originalLine.match(/(0x[0-9a-fA-F]{40})/);
+        request.provider = addrMatch ? addrMatch[1] : null;
+        // Extract Moltbook username (@AgentName)
+        const usernameMatch = originalLine.match(/@(\w+)/i);
+        // Avoid matching @ThemisEscrow itself
+        if (usernameMatch && usernameMatch[1].toLowerCase() !== "themisescrow" && usernameMatch[1].toLowerCase() !== "themis") {
+          request.providerUsername = usernameMatch[1];
+        }
       }
       if (line.includes("amount:")) {
         const match = line.match(/([\d.]+)\s*(molt|eth)/i);

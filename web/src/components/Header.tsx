@@ -32,6 +32,12 @@ export function Header() {
               >
                 Create
               </Link>
+              <Link
+                href="/docs"
+                className="text-slate-300 hover:text-white transition-colors"
+              >
+                API
+              </Link>
             </nav>
           </div>
           <ConnectButton />

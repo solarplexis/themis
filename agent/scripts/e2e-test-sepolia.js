@@ -36,7 +36,7 @@ function step(n, title) {
 async function main() {
   console.log("\n");
   console.log("  ╔══════════════════════════════════════════════════════╗");
-  console.log("  ║   THEMIS E2E TEST — On-Chain Escrow Flow (Sepolia)  ║");
+  console.log("  ║   THEMIS E2E TEST — On-Chain Escrow Flow (Sepolia)   ║");
   console.log("  ╚══════════════════════════════════════════════════════╝");
   console.log();
 

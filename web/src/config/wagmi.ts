@@ -98,6 +98,32 @@ export const ESCROW_ABI = [
     type: "function",
   },
   // Events
+  // Arbitrator functions
+  {
+    inputs: [{ name: "_escrowId", type: "uint256" }],
+    name: "release",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [{ name: "_escrowId", type: "uint256" }],
+    name: "refund",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      { name: "_escrowId", type: "uint256" },
+      { name: "_releaseTo", type: "bool" },
+    ],
+    name: "resolveDispute",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  // Events
   {
     anonymous: false,
     inputs: [
