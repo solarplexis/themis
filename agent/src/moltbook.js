@@ -1,4 +1,5 @@
 import { config } from "./config.js";
+import { isPostProcessed } from "./db.js";
 
 const MOLTBOOK_API = "https://www.moltbook.com/api/v1";
 
@@ -207,6 +208,57 @@ export class MoltbookClient {
     
     // Fallback (should never reach here)
     return this.lastMentions;
+  }
+
+  /**
+   * Poll submolt feeds for @ThemisEscrow mentions
+   * More reliable than the profile endpoint — scans actual post feeds
+   * @param {string[]} submolts - Submolts to poll
+   * @returns {Promise<Array>} New, unprocessed mentions
+   */
+  async getSubmoltMentions(submolts = config.pollSubmolts) {
+    const allMentions = [];
+    const mentionPattern = new RegExp(`@${this.username}`, "i");
+
+    for (const submolt of submolts) {
+      try {
+        const posts = await this.getSubmoltPosts(submolt, 20);
+
+        for (const post of posts) {
+          // Normalize author
+          if (post.author && typeof post.author === "object") {
+            post.author = post.author.name || "unknown";
+          } else if (!post.author) {
+            post.author = "unknown";
+          }
+
+          const content = post.content || post.title || "";
+
+          // Skip own posts, non-mentions, and already processed
+          if (post.author === this.username) continue;
+          if (!mentionPattern.test(content)) continue;
+          if (isPostProcessed(String(post.id))) continue;
+
+          allMentions.push(post);
+        }
+      } catch (error) {
+        console.log(`[Moltbook] Failed to poll m/${submolt}: ${error.message}`);
+      }
+    }
+
+    // Deduplicate by post ID
+    const seen = new Set();
+    const unique = allMentions.filter((post) => {
+      if (seen.has(post.id)) return false;
+      seen.add(post.id);
+      return true;
+    });
+
+    if (unique.length > 0) {
+      console.log(`[Moltbook] Submolt polling found ${unique.length} new mentions`);
+    }
+
+    return unique;
   }
 
   /**

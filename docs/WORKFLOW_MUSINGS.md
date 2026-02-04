@@ -193,3 +193,157 @@
 - Submitter transfers funds to Themis wallet, Themis creates the escrow on their behalf
 - Higher trust requirement on Themis but lower friction for agents
 
+# Next Steps (per Claude)
+ Wire Agent to Use Themis REST API + SQLite Persistence 
+
+ Goal
+
+ Two problems, one effort:
+
+ 1. API integration — Replace the agent's local verification/release/refund with calls to the Themis REST API. The agent becomes a Moltbook↔API bridge.
+ 2. Reliability — Replace the flaky profile-endpoint mention detection with submolt polling, and add SQLite so state survives restarts.
+
+ Part 1: SQLite Persistence
+
+ Why
+
+ The agent currently uses in-memory Set/Map for processedPosts, pendingEscrows, and escrowProviders. A restart loses all of this — leading to duplicate processing, lost
+ pending escrows, and broken provider identity tracking.
+
+ New file: agent/src/db.js
+
+ SQLite database (via better-sqlite3) with three tables:
+
+ -- Posts we've already handled
+ CREATE TABLE processed_posts (
+   post_id TEXT PRIMARY KEY,
+   processed_at TEXT DEFAULT (datetime('now'))
+ );
+
+ -- Escrows awaiting on-chain funding confirmation
+ CREATE TABLE pending_escrows (
+   key TEXT PRIMARY KEY,
+   submitter TEXT,
+   provider_address TEXT,
+   provider_username TEXT,
+   amount REAL,
+   token TEXT,
+   requirements TEXT,
+   post_id TEXT,
+   created_at INTEGER
+ );
+
+ -- Maps escrowId → provider Moltbook username (for delivery auth)
+ CREATE TABLE escrow_providers (
+   escrow_id INTEGER PRIMARY KEY,
+   username TEXT
+ );
+
+ Export functions that mirror the current in-memory API:
+ - isPostProcessed(postId) / markPostProcessed(postId)
+ - addPendingEscrow(key, data) / getPendingEscrows() / deletePendingEscrow(key)
+ - setEscrowProvider(escrowId, username) / getEscrowProvider(escrowId)
+
+ Modify: agent/src/heartbeat.js
+
+ - Replace processedPosts Set → db.isPostProcessed() / db.markPostProcessed()
+ - Replace pendingEscrows Map → db.addPendingEscrow() / db.getPendingEscrows() / db.deletePendingEscrow()
+ - Replace escrowProviders Map → db.setEscrowProvider() / db.getEscrowProvider()
+
+ Modify: agent/package.json
+
+ - Add better-sqlite3 dependency
+
+ Part 2: Submolt Polling
+
+ Why
+
+ getMentions() in moltbook.js uses the profile endpoint (/agents/profile?name=ThemisEscrow), which has an undefined "recent" window and is unreliable. Submolt feed
+ polling (/posts?submolt=X&sort=new&limit=N) scans the actual post feed.
+
+ Modify: agent/src/moltbook.js
+
+ - Add getSubmoltMentions(submolts) method:
+   - Polls a list of submolts (default: ["blockchain", "general", "agent-commerce"])
+   - Fetches recent posts from each via existing getSubmoltPosts()
+   - Filters for @ThemisEscrow mentions (excluding own posts)
+   - Deduplicates via db.isPostProcessed()
+ - Keep existing getMentions() as a fallback — try submolt polling first, fall back to profile endpoint
+
+ Modify: agent/src/config.js
+
+ - Add pollSubmolts config: ["blockchain", "general", "agent-commerce"] (override with POLL_SUBMOLTS env var)
+
+ Modify: agent/src/heartbeat.js
+
+ - tick(): call moltbook.getSubmoltMentions() instead of moltbook.getMentions()
+
+ Part 3: API Integration
+
+ Delivery flow change
+
+ Currently: detect mention → fetch IPFS → AI verify → on-chain release/refund → post result
+ After: detect mention → sign message → POST /api/escrow/:id/deliver → post result
+
+ Auth issue & fix
+
+ The agent's wallet is the arbitrator, not the seller. The API's deliver endpoint checks signer === escrow.seller. Fix: update the API to also accept the arbitrator's
+ signature.
+
+ Web app changes
+
+ web/src/lib/contract.ts — Add:
+ export async function getArbitrator(chainId?: number): Promise<Address>
+
+ web/src/app/api/escrow/[id]/deliver/route.ts — Change signature check:
+ valid = signer === escrow.seller OR signer === arbitrator
+
+ web/src/app/api/escrow/[id]/dispute/route.ts — Same: accept arbitrator signature too.
+
+ web/src/app/docs/page.tsx — Note that the arbitrator wallet can also sign deliver/dispute requests.
+
+ Agent changes
+
+ agent/src/config.js — Add:
+ - themisApiUrl (default: https://themis-escrow.netlify.app, override: THEMIS_API_URL)
+
+ agent/src/heartbeat.js — handleDeliveryRequest():
+ 1. Sign "Themis: deliver escrow #<id>" with arbitrator wallet
+ 2. POST to ${themisApiUrl}/api/escrow/${id}/deliver with { deliverable, signature }
+ 3. Read { approved, confidence, reason, txHash } from response
+ 4. Post result to Moltbook via formatVerificationResult()
+
+ agent/src/heartbeat.js — handleDisputeRequest():
+ 1. Sign "Themis: dispute escrow #<id>"
+ 2. POST to ${themisApiUrl}/api/escrow/${id}/dispute with { reason, signature }
+ 3. Post acknowledgment to Moltbook
+
+ agent/src/index.js — handleVerify() CLI command: same API-based pattern.
+
+ Files NOT Modified
+
+ - agent/src/contract.js — still needed for createEscrowETH/MOLT, event queries, CLI release/refund
+ - agent/src/verifier.js — no longer called from heartbeat, kept for standalone use
+ - agent/src/ipfs.js — no longer called from heartbeat (API handles it), kept for other use
+
+ Implementation Order
+
+ 1. agent/src/db.js — SQLite schema + accessor functions
+ 2. agent/package.json — add better-sqlite3
+ 3. agent/src/config.js — add themisApiUrl, pollSubmolts
+ 4. agent/src/moltbook.js — add getSubmoltMentions()
+ 5. agent/src/heartbeat.js — swap in-memory state for db, use submolt polling, use API for deliver/dispute
+ 6. agent/src/index.js — handleVerify() uses API
+ 7. web/src/lib/contract.ts — add getArbitrator()
+ 8. web/src/app/api/escrow/[id]/deliver/route.ts — accept arbitrator signature
+ 9. web/src/app/api/escrow/[id]/dispute/route.ts — accept arbitrator signature
+ 10. web/src/app/docs/page.tsx — document arbitrator auth
+
+ Verification
+
+ 1. cd agent && npm install — confirm better-sqlite3 installs
+ 2. node src/index.js — agent starts, creates themis.db, loads existing state
+ 3. Stop and restart agent — confirm processed posts are remembered, pending escrows survive
+ 4. cd web && npm run dev — start web app
+ 5. CLI: verify <escrowId> <deliverable> — should call API, not local verification
+ 6. Check that submolt polling finds mentions (may need a test post on Moltbook)

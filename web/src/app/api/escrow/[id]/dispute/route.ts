@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyMessage } from "viem";
-import { getEscrow } from "@/lib/contract";
+import { getEscrow, getArbitrator } from "@/lib/contract";
 
 export async function POST(
   request: NextRequest,
@@ -61,10 +61,19 @@ export async function POST(
     });
 
     if (!isBuyer && !isSeller) {
-      return NextResponse.json(
-        { error: "Invalid signature — signer is not a party to this escrow" },
-        { status: 403 }
-      );
+      const arbitrator = await getArbitrator();
+      const isArbitrator = await verifyMessage({
+        address: arbitrator,
+        message,
+        signature: sigHex,
+      });
+
+      if (!isArbitrator) {
+        return NextResponse.json(
+          { error: "Invalid signature — signer is not a party to this escrow" },
+          { status: 403 }
+        );
+      }
     }
 
     // For now: acknowledge the dispute (full resolution is Phase 4)

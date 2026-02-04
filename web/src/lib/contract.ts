@@ -8,7 +8,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base, sepolia } from "viem/chains";
-import { CONTRACTS, ESCROW_ABI, EscrowStatus } from "@/config/wagmi";
+import { CONTRACTS, ESCROW_ABI, EscrowStatus } from "@/config/contracts";
 
 const chains = { [base.id]: base, [sepolia.id]: sepolia } as const;
 
@@ -105,6 +105,20 @@ export async function getEscrow(
     status: result.status,
     statusName: EscrowStatus[result.status as keyof typeof EscrowStatus] ?? "Unknown",
   };
+}
+
+export async function getArbitrator(chainId?: number): Promise<Address> {
+  const id = chainId ?? getDefaultChainId();
+  const client = getPublicClient(id);
+  const address = getContractAddress(id);
+
+  const arbitrator = (await client.readContract({
+    address,
+    abi: ESCROW_ABI,
+    functionName: "arbitrator",
+  })) as Address;
+
+  return arbitrator;
 }
 
 export async function getEscrowCount(chainId?: number): Promise<number> {

@@ -9,9 +9,9 @@ dotenv.config({ path: resolve(__dirname, "../../.env") });
 // ============ CONFIG ============
 
 const SUBMITTER_PRIVATE_KEY = process.env.TEST_SUBMITTER_PRIVATE_KEY;
-const MOLTBOOK_TEST_KEY = process.env.MOLTBOOK_API_KEY_TEST;
+const ARBITRATOR_PRIVATE_KEY = process.env.TESTNET_PRIVATE_KEY;
 const SEPOLIA_RPC = process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
-const MOLTBOOK_API = "https://www.moltbook.com/api/v1";
+const THEMIS_API = process.env.THEMIS_API_URL || "http://localhost:3000";
 const CONTRACT_ADDRESS = "0x3f1c8Af6BDaA7e184EcA1797749E87A8345E0471";
 const ESCROW_AMOUNT = "0.001"; // ETH
 
@@ -141,51 +141,72 @@ async function main() {
   console.log(`    TaskCID:  ${escrow[4]}`);
   console.log(`    Deadline: ${new Date(Number(escrow[5]) * 1000).toISOString()}`);
 
-  // ---- STEP 4: Post delivery on Moltbook (as test agent) ----
-  step(4, "Post delivery on Moltbook");
+  // ---- STEP 4: Deliver via Themis REST API ----
+  step(4, "Deliver via REST API (arbitrator-signed)");
 
-  if (!MOLTBOOK_TEST_KEY) {
-    console.log(`  Skipping — no MOLTBOOK_API_KEY_TEST in .env`);
-    console.log(`  Use the agent CLI instead: verify ${escrowId} "haiku deliverable"`);
+  if (!ARBITRATOR_PRIVATE_KEY) {
+    console.log(`  Skipping — no TESTNET_PRIVATE_KEY in .env`);
   } else {
-    const deliveryContent =
-      `@ThemisEscrow deliver\n` +
-      `escrow: #${escrowId}\n` +
-      `deliverable: verified`;
+    const arbitratorWallet = new ethers.Wallet(ARBITRATOR_PRIVATE_KEY);
+    const deliverMessage = `Themis: deliver escrow #${escrowId}`;
+    const deliverable = "verified";
 
-    console.log(`  Posting delivery as test agent...`);
-    deliveryContent.split("\n").forEach((l) => console.log(`    ${l}`));
+    console.log(`  Arbitrator:   ${arbitratorWallet.address}`);
+    console.log(`  API:          ${THEMIS_API}`);
+    console.log(`  Message:      "${deliverMessage}"`);
+    console.log(`  Deliverable:  "${deliverable}"`);
+
+    const signature = await arbitratorWallet.signMessage(deliverMessage);
+    console.log(`  Signature:    ${signature.slice(0, 20)}...`);
+
+    const url = `${THEMIS_API}/api/escrow/${escrowId}/deliver`;
+    console.log(`\n  POST ${url}`);
 
     try {
-      const res = await fetch(`${MOLTBOOK_API}/posts`, {
+      const res = await fetch(url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${MOLTBOOK_TEST_KEY}`,
-        },
-        body: JSON.stringify({
-          title: `Delivery for Escrow #${escrowId}`,
-          content: deliveryContent,
-          submolt: "blockchain",
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deliverable, signature }),
       });
 
+      const result = await res.json();
+
       if (!res.ok) {
-        const text = await res.text();
-        console.log(`\n  Post failed (${res.status}): ${text}`);
-        if (res.status === 429) {
-          console.log(`  Rate-limited. Use agent CLI instead: verify ${escrowId} verified`);
-        }
+        console.log(`\n  API error (${res.status}): ${result.error}`);
       } else {
-        const result = await res.json();
-        const postId = result.post?.id || result.postId || result.id;
-        console.log(`\n  Delivery posted: ${postId}`);
-        console.log(`  Check agent terminal + Moltbook UI for ThemisEscrow's verification response.`);
+        console.log(`\n  API Response:`);
+        console.log(`    Approved:    ${result.approved}`);
+        console.log(`    Confidence:  ${result.confidence}%`);
+        console.log(`    Reason:      ${result.reason}`);
+        console.log(`    Tx hash:     ${result.txHash}`);
+        if (result.txHash) {
+          console.log(`    https://sepolia.etherscan.io/tx/${result.txHash}`);
+        }
       }
     } catch (error) {
-      console.log(`\n  Post error: ${error.message}`);
+      console.log(`\n  API call failed: ${error.message}`);
     }
   }
+
+  // ---- STEP 5: Verify final on-chain state ----
+  step(5, "Verify final on-chain state");
+
+  // Poll until the tx confirms (Sepolia blocks ~12s)
+  let finalStatus = status;
+  const maxWait = 60; // seconds
+  console.log(`  Waiting up to ${maxWait}s for release tx to confirm...`);
+  for (let i = 0; i < maxWait / 5; i++) {
+    await new Promise(r => setTimeout(r, 5000));
+    const check = await contract.getEscrow(escrowId);
+    finalStatus = Number(check[6]);
+    console.log(`    ${(i + 1) * 5}s — status: ${STATUS_NAMES[finalStatus]}`);
+    if (finalStatus !== 1) break; // No longer Funded → tx confirmed
+  }
+
+  const finalEscrow = await contract.getEscrow(escrowId);
+
+  console.log(`  Escrow #${escrowId} final state:`);
+  console.log(`    Status: ${STATUS_NAMES[finalStatus]}`);
 
   // ---- SUMMARY ----
   console.log(`\n${"=".repeat(60)}`);
@@ -194,10 +215,11 @@ async function main() {
 
   const checks = {
     "Escrow created on-chain": escrowId !== null,
-    "Status is Funded": status === 1,
+    "Initial status was Funded": status === 1,
     "Buyer matches submitter": escrow[0].toLowerCase() === submitterWallet.address.toLowerCase(),
     "Seller matches provider": escrow[1].toLowerCase() === providerAddress.toLowerCase(),
     "Amount matches": ethers.formatEther(escrow[3]) === ESCROW_AMOUNT,
+    "Final status is Released or Refunded": finalStatus === 2 || finalStatus === 3,
   };
 
   let allPassed = true;
@@ -208,8 +230,7 @@ async function main() {
   }
 
   if (allPassed) {
-    console.log(`\n  ON-CHAIN ESCROW VERIFIED — Escrow #${escrowId} funded and ready.`);
-    console.log(`  Monitor the agent terminal for verification + release/refund.\n`);
+    console.log(`\n  E2E TEST PASSED — Escrow #${escrowId} created, delivered via API, and resolved on-chain.\n`);
   } else {
     console.log(`\n  SOME CHECKS FAILED\n`);
   }

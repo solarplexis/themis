@@ -38,6 +38,11 @@ next-env.d.ts
 Thumbs.db
 *.pem
 
+# SQLite
+*.db
+*.db-wal
+*.db-shm
+
 # Logs
 *.log
 npm-debug.log*

@@ -4,21 +4,20 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { MoltbookClient, formatVerificationResult } from "./moltbook.js";
 import { MoltEscrowContract, EscrowStatus } from "./contract.js";
-import { fetchFromIPFS, parseTaskRequirements, isIPFSReference } from "./ipfs.js";
-import { verifyDeliverable, verifyDispute } from "./verifier.js";
 import { config } from "./config.js";
+import {
+  isPostProcessed,
+  markPostProcessed,
+  getPendingEscrows,
+  addPendingEscrow,
+  deletePendingEscrow,
+  hasPendingEscrows,
+  getEscrowProvider,
+  setEscrowProvider,
+} from "./db.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
-// Track processed posts to avoid duplicates
-const processedPosts = new Set();
-
-// Track pending escrows awaiting funding
-const pendingEscrows = new Map();
-
-// Track provider Moltbook usernames for funded escrows (escrowId → username)
-const escrowProviders = new Map();
 
 /**
  * Heartbeat - runs periodically to check Moltbook for mentions
@@ -39,6 +38,8 @@ export class ThemisHeartbeat {
   async start(intervalMs = 60000) {
     console.log("[Heartbeat] Starting Themis heartbeat...");
     console.log(`[Heartbeat] Checking every ${intervalMs / 1000} seconds`);
+    console.log(`[Heartbeat] Polling submolts: ${config.pollSubmolts.join(", ")}`);
+    console.log(`[Heartbeat] API: ${config.themisApiUrl}`);
 
     this.isRunning = true;
 
@@ -54,8 +55,8 @@ export class ThemisHeartbeat {
         console.log(`[Heartbeat] Visit Moltbook to claim your agent`);
       }
     } catch (error) {
-      console.log(`[Heartbeat] ⚠️ Status check failed (${error.message})`);
-      console.log(`[Heartbeat] Continuing with public endpoint for mentions - agent will still work`);
+      console.log(`[Heartbeat] Status check failed (${error.message})`);
+      console.log(`[Heartbeat] Continuing — agent will still work`);
     }
 
     // Update profile on startup
@@ -68,6 +69,7 @@ export class ThemisHeartbeat {
           "• Submit deliverable: `@ThemisEscrow deliver`\n" +
           "• Raise a dispute: `@ThemisEscrow dispute`\n\n" +
           "Supports ETH and MOLT | 1% fee | Smart contract secured\n" +
+          "API: https://themis-escrow.netlify.app/docs\n" +
           "Skill manifest: https://themis-escrow.netlify.app/skill.json",
       });
       console.log(`[Heartbeat] Profile description updated`);
@@ -112,31 +114,29 @@ export class ThemisHeartbeat {
    */
   async tick() {
     try {
-      // Get mentions since last check
-      const mentions = await this.moltbook.getMentions(this.lastCheck);
-      this.lastCheck = new Date().toISOString();
+      // Primary: poll submolt feeds for mentions
+      let mentions = await this.moltbook.getSubmoltMentions();
 
-      // Log endpoint health status
-      const health = this.moltbook.getEndpointHealth();
-      if (health.consecutiveFailures > 0) {
-        console.log(`[Heartbeat] Endpoint health: ${health.score}% (${health.consecutiveFailures} consecutive failures)`);
-        console.log(`[Heartbeat] Using cached data: ${health.cachedMentions} mentions (age: ${health.cacheAge})`);
-        if (health.score < 50) {
-          console.log(`[Heartbeat] ⚠️ ${health.recommendation}`);
-        }
+      // Fallback: try profile endpoint if submolt polling found nothing
+      if (mentions.length === 0) {
+        const profileMentions = await this.moltbook.getMentions(this.lastCheck);
+        // Filter out already-processed posts (db-backed dedup)
+        mentions = profileMentions.filter(
+          (post) => !isPostProcessed(String(post.id))
+        );
       }
+
+      this.lastCheck = new Date().toISOString();
 
       if (mentions.length > 0) {
         console.log(`\n[Heartbeat] Found ${mentions.length} new mentions`);
-
-        // Process each mention
         for (const post of mentions) {
           await this.processPost(post);
         }
       }
 
       // Poll for on-chain EscrowCreated events to match pending escrows
-      if (pendingEscrows.size > 0) {
+      if (hasPendingEscrows()) {
         await this.pollEscrowEvents();
       }
 
@@ -183,13 +183,14 @@ export class ThemisHeartbeat {
    * Match an on-chain EscrowCreated event to a pending escrow request
    */
   async matchPendingEscrow(event) {
-    const buyerAddr = event.buyer.toLowerCase();
     const sellerAddr = event.seller.toLowerCase();
     const eventAmount = parseFloat(
       event.token === "0x0000000000000000000000000000000000000000"
         ? ethers.formatEther(event.amount)
         : ethers.formatUnits(event.amount, 18)
     );
+
+    const pendingEscrows = getPendingEscrows();
 
     for (const [key, pending] of pendingEscrows.entries()) {
       const pendingProviderAddr = pending.providerAddress.toLowerCase();
@@ -203,7 +204,7 @@ export class ThemisHeartbeat {
 
         // Track provider identity for delivery verification
         if (pending.providerUsername) {
-          escrowProviders.set(event.escrowId, pending.providerUsername);
+          setEscrowProvider(event.escrowId, pending.providerUsername);
           console.log(`[Heartbeat] Registered provider @${pending.providerUsername} for escrow #${event.escrowId}`);
         }
 
@@ -228,7 +229,7 @@ export class ThemisHeartbeat {
           console.error(`[Heartbeat] Failed to reply with confirmation: ${error.message}`);
         }
 
-        pendingEscrows.delete(key);
+        deletePendingEscrow(key);
         break;
       }
     }
@@ -272,7 +273,7 @@ export class ThemisHeartbeat {
         `- **Total volume**: ${parseFloat(volumeEth).toFixed(4)} ETH\n\n` +
         `### How to use\n` +
         `Tag \`@ThemisEscrow escrow\` with a provider address, amount, and requirements to start a secure escrow.\n\n` +
-        `[View contract](${explorer}) | [Skill manifest](https://themis-escrow.netlify.app/skill.json)\n\n` +
+        `[View contract](${explorer}) | [API docs](https://themis-escrow.netlify.app/docs) | [Skill manifest](https://themis-escrow.netlify.app/skill.json)\n\n` +
         `---\n*Secured by Themis*`;
 
       await this.moltbook.createPost(content, {
@@ -286,7 +287,6 @@ export class ThemisHeartbeat {
       // Don't let status post failures block the heartbeat
       if (error.message.includes("429") || error.message.includes("rate")) {
         console.log(`[Heartbeat] Status post rate-limited — will retry next cycle`);
-        // Set a partial cooldown so we don't retry every tick
         this.lastStatusPost = Date.now() - (23 * 60 * 60 * 1000);
       } else {
         console.error(`[Heartbeat] Status post failed: ${error.message}`);
@@ -299,11 +299,13 @@ export class ThemisHeartbeat {
    * Process a single post
    */
   async processPost(post) {
-    // Skip if already processed
-    if (processedPosts.has(post.id)) {
+    const postId = String(post.id);
+
+    // Skip if already processed (db-backed)
+    if (isPostProcessed(postId)) {
       return;
     }
-    processedPosts.add(post.id);
+    markPostProcessed(postId);
 
     console.log(`[Heartbeat] Processing post ${post.id} from @${post.author}`);
 
@@ -366,9 +368,9 @@ export class ThemisHeartbeat {
       return;
     }
 
-    // Store pending escrow keyed by provider address + amount for later matching
+    // Store pending escrow in db
     const pendingKey = `${request.provider.toLowerCase()}-${request.amount}-${request.token}`;
-    pendingEscrows.set(pendingKey, {
+    addPendingEscrow(pendingKey, {
       submitter: post.author,
       providerAddress: request.provider,
       providerUsername: request.providerUsername,
@@ -404,7 +406,7 @@ export class ThemisHeartbeat {
   }
 
   /**
-   * Handle a delivery/verification request
+   * Handle a delivery/verification request — delegates to REST API
    */
   async handleDeliveryRequest(post, request) {
     console.log(`[Heartbeat] Delivery request for escrow #${request.escrowId}`);
@@ -420,21 +422,11 @@ export class ThemisHeartbeat {
     }
 
     // Verify the poster is the registered provider for this escrow
-    const registeredProvider = escrowProviders.get(request.escrowId);
+    const registeredProvider = getEscrowProvider(request.escrowId);
     if (registeredProvider && post.author.toLowerCase() !== registeredProvider.toLowerCase()) {
       console.log(`[Heartbeat] Rejected delivery from @${post.author} — expected @${registeredProvider}`);
       await this.moltbook.reply(post.id,
         `@${post.author} Only the registered provider (@${registeredProvider}) can submit deliverables for Escrow #${request.escrowId}.`
-      );
-      return;
-    }
-
-    // Get escrow from contract
-    const escrow = await this.contract.getEscrow(request.escrowId);
-
-    if (escrow.status !== EscrowStatus.Funded) {
-      await this.moltbook.reply(post.id,
-        `@${post.author} Escrow #${request.escrowId} is not in a funded state. Current status: ${escrow.status}`
       );
       return;
     }
@@ -446,54 +438,51 @@ export class ThemisHeartbeat {
       `This may take a moment.`
     );
 
-    // Fetch requirements and deliverable
-    let requirements, deliverable;
+    // Sign the deliver message with the arbitrator wallet
+    const message = `Themis: deliver escrow #${request.escrowId}`;
+    const signature = await this.contract.wallet.signMessage(message);
+
+    // Call the REST API
+    const url = `${config.themisApiUrl}/api/escrow/${request.escrowId}/deliver`;
+    console.log(`[Heartbeat] POST ${url}`);
 
     try {
-      if (isIPFSReference(escrow.taskCID)) {
-        requirements = await fetchFromIPFS(escrow.taskCID);
-      } else {
-        requirements = parseTaskRequirements(escrow.taskCID);
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deliverable: request.deliverable,
+          signature,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(error.error || `API returned ${response.status}`);
       }
 
-      if (isIPFSReference(request.deliverable)) {
-        deliverable = await fetchFromIPFS(request.deliverable);
-      } else {
-        deliverable = { description: request.deliverable };
-      }
-    } catch (error) {
-      await this.moltbook.reply(post.id,
-        `@${post.author} Failed to fetch content: ${error.message}`
+      const result = await response.json();
+      console.log(`[Heartbeat] API result: ${result.approved ? "APPROVED" : "REJECTED"} (${result.confidence}%)`);
+
+      // Post result to Moltbook
+      const reply = formatVerificationResult(
+        request.escrowId,
+        result.approved,
+        result.reason,
+        result.txHash
       );
-      return;
+
+      await this.moltbook.reply(post.id, reply);
+    } catch (error) {
+      console.error(`[Heartbeat] API deliver failed: ${error.message}`);
+      await this.moltbook.reply(post.id,
+        `@${post.author} Verification failed: ${error.message}`
+      );
     }
-
-    // AI verification
-    const result = await verifyDeliverable(requirements, deliverable);
-
-    // Execute on-chain action
-    let txHash;
-    if (result.approved && result.confidence >= 70) {
-      const receipt = await this.contract.release(request.escrowId);
-      txHash = receipt.hash;
-    } else {
-      const receipt = await this.contract.refund(request.escrowId);
-      txHash = receipt.hash;
-    }
-
-    // Post result
-    const response = formatVerificationResult(
-      request.escrowId,
-      result.approved && result.confidence >= 70,
-      result.reason,
-      txHash
-    );
-
-    await this.moltbook.reply(post.id, response);
   }
 
   /**
-   * Handle a dispute request
+   * Handle a dispute request — delegates to REST API
    */
   async handleDisputeRequest(post, request) {
     console.log(`[Heartbeat] Dispute request for escrow #${request.escrowId}`);
@@ -505,22 +494,40 @@ export class ThemisHeartbeat {
       return;
     }
 
-    // Get escrow from contract
-    const escrow = await this.contract.getEscrow(request.escrowId);
+    // Sign the dispute message with the arbitrator wallet
+    const message = `Themis: dispute escrow #${request.escrowId}`;
+    const signature = await this.contract.wallet.signMessage(message);
 
-    // Mark as disputed on-chain (if not already)
-    if (escrow.status === EscrowStatus.Funded) {
+    // Call the REST API
+    const url = `${config.themisApiUrl}/api/escrow/${request.escrowId}/dispute`;
+    console.log(`[Heartbeat] POST ${url}`);
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason: request.reason || "Dispute raised via Moltbook",
+          signature,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(error.error || `API returned ${response.status}`);
+      }
+
+      const result = await response.json();
+
       await this.moltbook.reply(post.id,
         `@${post.author} Dispute registered for Escrow #${request.escrowId}.\n\n` +
-        `**Reason**: ${request.reason || "No reason provided"}\n\n` +
+        `**Reason**: ${result.reason}\n\n` +
         `I'll review the case and post my ruling shortly.`
       );
-
-      // In a full implementation, we'd gather evidence from both parties
-      // For now, this just logs the dispute
-    } else {
+    } catch (error) {
+      console.error(`[Heartbeat] API dispute failed: ${error.message}`);
       await this.moltbook.reply(post.id,
-        `@${post.author} Escrow #${request.escrowId} cannot be disputed. Status: ${escrow.status}`
+        `@${post.author} Failed to register dispute: ${error.message}`
       );
     }
   }

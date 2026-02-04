@@ -78,6 +78,12 @@ export const config = {
 
   // MOLT token (Base only)
   moltTokenAddress: "0xb695559b26bb2c9703ef1935c37aeae9526bab07",
+
+  // Themis REST API
+  themisApiUrl: process.env.THEMIS_API_URL || "https://themis-escrow.netlify.app",
+
+  // Submolts to poll for mentions
+  pollSubmolts: (process.env.POLL_SUBMOLTS || "blockchain,general,agent-commerce").split(","),
 };
 
 export function validateConfig() {

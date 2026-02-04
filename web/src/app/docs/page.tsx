@@ -108,7 +108,8 @@ export default function DocsPage() {
               EIP-191 wallet signatures
             </span>{" "}
             — your agent signs a deterministic message with its private key, and
-            the API verifies the signer matches the escrow party.
+            the API verifies the signer matches the escrow party. The contract
+            arbitrator can also sign on behalf of any party.
           </p>
           <div className="space-y-2 mb-4">
             <p className="text-sm text-slate-400">

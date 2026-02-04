@@ -1,7 +1,5 @@
 import { config, validateConfig } from "./config.js";
 import { MoltEscrowContract, EscrowStatus } from "./contract.js";
-import { fetchFromIPFS, parseTaskRequirements, isIPFSReference } from "./ipfs.js";
-import { verifyDeliverable, verifyDispute } from "./verifier.js";
 import { ThemisHeartbeat } from "./heartbeat.js";
 import { MoltbookClient } from "./moltbook.js";
 
@@ -191,56 +189,40 @@ async function handleVerify(contract, escrowId, deliverableCID) {
     return;
   }
 
-  console.log(`\n[Verify] Starting verification for escrow #${escrowId}...`);
+  console.log(`\n[Verify] Starting verification for escrow #${escrowId} via API...`);
 
-  // Get escrow details
-  const escrow = await contract.getEscrow(escrowId);
+  // Sign the deliver message with the arbitrator wallet
+  const message = `Themis: deliver escrow #${escrowId}`;
+  const signature = await contract.wallet.signMessage(message);
 
-  if (escrow.status !== EscrowStatus.Funded) {
-    console.log(`[Verify] Escrow is not in Funded status (current: ${escrow.status})`);
-    return;
+  // Call the REST API
+  const url = `${config.themisApiUrl}/api/escrow/${escrowId}/deliver`;
+  console.log(`[Verify] POST ${url}`);
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      deliverable: deliverableCID,
+      signature,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+    throw new Error(error.error || `API returned ${response.status}`);
   }
 
-  // Fetch requirements
-  let requirements;
-  if (isIPFSReference(escrow.taskCID)) {
-    console.log(`[Verify] Fetching requirements from IPFS: ${escrow.taskCID}...`);
-    try {
-      const requirementsRaw = await fetchFromIPFS(escrow.taskCID);
-      requirements = parseTaskRequirements(requirementsRaw);
-    } catch (error) {
-      console.log(`[Verify] IPFS fetch failed, using as description`);
-      requirements = { description: escrow.taskCID };
-    }
-  } else {
-    console.log(`[Verify] Requirements: ${escrow.taskCID}`);
-    requirements = parseTaskRequirements(escrow.taskCID);
-  }
+  const result = await response.json();
 
-  // Fetch deliverable
-  let deliverable;
-  if (isIPFSReference(deliverableCID)) {
-    console.log(`[Verify] Fetching deliverable from IPFS: ${deliverableCID}...`);
-    try {
-      deliverable = await fetchFromIPFS(deliverableCID);
-    } catch (error) {
-      console.log(`[Verify] IPFS fetch failed, using as description`);
-      deliverable = { description: deliverableCID };
-    }
+  if (result.approved) {
+    console.log(`[Verify] ✓ Approved (${result.confidence}% confidence)`);
+    console.log(`[Verify] Reason: ${result.reason}`);
+    console.log(`[Verify] Tx: ${result.txHash}`);
   } else {
-    console.log(`[Verify] Deliverable: ${deliverableCID}`);
-    deliverable = { description: deliverableCID };
-  }
-
-  // AI verification
-  const result = await verifyDeliverable(requirements, deliverable);
-
-  if (result.approved && result.confidence >= 70) {
-    console.log(`[Verify] ✓ Approved! Releasing funds to provider...`);
-    await contract.release(escrowId);
-  } else {
-    console.log(`[Verify] ✗ Rejected. Refunding submitter...`);
-    await contract.refund(escrowId);
+    console.log(`[Verify] ✗ Rejected (${result.confidence}% confidence)`);
+    console.log(`[Verify] Reason: ${result.reason}`);
+    console.log(`[Verify] Tx: ${result.txHash}`);
   }
 }
 

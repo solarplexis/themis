@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyMessage } from "viem";
-import { getEscrow, release, refund } from "@/lib/contract";
+import { getEscrow, getArbitrator, release, refund } from "@/lib/contract";
 import { isIPFSReference, fetchFromIPFS, parseContent } from "@/lib/ipfs";
 import { verifyDeliverable } from "@/lib/verify";
 
@@ -47,19 +47,30 @@ export async function POST(
       );
     }
 
-    // 2. Verify signature — signer must be the seller
+    // 2. Verify signature — signer must be the seller or the arbitrator
     const message = `Themis: deliver escrow #${escrowId}`;
-    const valid = await verifyMessage({
+    const sigHex = signature as `0x${string}`;
+
+    const isSeller = await verifyMessage({
       address: escrow.seller,
       message,
-      signature: signature as `0x${string}`,
+      signature: sigHex,
     });
 
-    if (!valid) {
-      return NextResponse.json(
-        { error: "Invalid signature — signer does not match escrow seller" },
-        { status: 403 }
-      );
+    if (!isSeller) {
+      const arbitrator = await getArbitrator();
+      const isArbitrator = await verifyMessage({
+        address: arbitrator,
+        message,
+        signature: sigHex,
+      });
+
+      if (!isArbitrator) {
+        return NextResponse.json(
+          { error: "Invalid signature — signer is not the seller or arbitrator" },
+          { status: 403 }
+        );
+      }
     }
 
     // 3. Fetch requirements from taskCID
