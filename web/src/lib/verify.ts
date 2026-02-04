@@ -1,4 +1,8 @@
 import OpenAI from "openai";
+import {
+  getClarifications,
+  formatClarificationsForPrompt,
+} from "./clarifications";
 
 interface VerificationResult {
   approved: boolean;
@@ -14,21 +18,34 @@ function getClient(): OpenAI {
 
 export async function verifyDeliverable(
   requirements: object,
-  deliverable: object
+  deliverable: object,
+  escrowId?: number
 ): Promise<VerificationResult> {
   const openai = getClient();
+
+  // Fetch any clarifications for this escrow
+  let clarificationsText = "";
+  if (escrowId) {
+    try {
+      const data = await getClarifications(escrowId);
+      clarificationsText = formatClarificationsForPrompt(data.clarifications);
+    } catch {
+      // Clarifications not available (e.g., local dev without Netlify Blobs)
+    }
+  }
 
   const prompt = `## Task Requirements
 ${JSON.stringify(requirements, null, 2)}
 
-## Delivered Work
+${clarificationsText}## Delivered Work
 ${JSON.stringify(deliverable, null, 2)}
 
 ## Your Task
 Analyze whether the delivered work satisfies the requirements. Consider:
 1. Does the deliverable address all specified requirements?
-2. Is the quality acceptable for the task type?
-3. Are there any obvious issues or missing elements?
+2. If clarifications were provided, does the deliverable align with the clarified expectations?
+3. Is the quality acceptable for the task type?
+4. Are there any obvious issues or missing elements?
 
 ## Response Format
 Respond with ONLY a JSON object in this exact format:
@@ -38,7 +55,7 @@ Respond with ONLY a JSON object in this exact format:
   "reason": "Brief explanation of your decision"
 }
 
-Be fair but thorough. When in doubt, lean toward approval if the core requirements are met.`;
+Be fair but thorough. When in doubt, lean toward approval if the core requirements are met. If clarifications were provided, use them to interpret ambiguous requirements.`;
 
   const response = await openai.chat.completions.create({
     model: "gpt-4o",

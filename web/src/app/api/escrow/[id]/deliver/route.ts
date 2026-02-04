@@ -91,8 +91,8 @@ export async function POST(
       deliverableContent = parseContent(deliverable);
     }
 
-    // 5. AI verification
-    const verification = await verifyDeliverable(requirements, deliverableContent);
+    // 5. AI verification (includes any clarifications for this escrow)
+    const verification = await verifyDeliverable(requirements, deliverableContent, escrowId);
 
     // 6. Submit on-chain tx based on result
     let txHash: string;

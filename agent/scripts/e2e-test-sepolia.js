@@ -15,6 +15,10 @@ const THEMIS_API = process.env.THEMIS_API_URL || "http://localhost:3000";
 const CONTRACT_ADDRESS = "0x3f1c8Af6BDaA7e184EcA1797749E87A8345E0471";
 const ESCROW_AMOUNT = "0.001"; // ETH
 
+// CLI arguments
+const CLI_TASK = process.argv[2] || null;
+const CLI_DELIVERABLE = process.argv[3] || null;
+
 const ABI = [
   "function createEscrowETH(address _seller, string _taskCID, uint256 _deadline) payable returns (uint256)",
   "function getEscrow(uint256 _escrowId) view returns (tuple(address buyer, address seller, address token, uint256 amount, string taskCID, uint256 deadline, uint8 status))",
@@ -34,6 +38,29 @@ function step(n, title) {
 // ============ MAIN TEST ============
 
 async function main() {
+  // Show help if requested
+  if (process.argv[2] === "help" || process.argv[2] === "--help" || process.argv[2] === "-h") {
+    console.log(`
+  Themis E2E Test (Sepolia)
+
+  Usage: node scripts/e2e-test-sepolia.js [task] [deliverable]
+
+  Arguments:
+    task         The task/requirements for the escrow (default: "Reply with the word 'verified' to confirm delivery")
+    deliverable  The deliverable to submit (default: "verified")
+
+  Examples:
+    node scripts/e2e-test-sepolia.js
+    node scripts/e2e-test-sepolia.js "Write a haiku about coding" "Code flows like water / Bugs emerge then disappear / Ship it, we are done"
+
+  Environment:
+    THEMIS_API_URL    API endpoint (default: http://localhost:3000)
+    TEST_SUBMITTER_PRIVATE_KEY   Wallet that creates the escrow
+    TESTNET_PRIVATE_KEY          Arbitrator wallet for signing delivery
+`);
+    process.exit(0);
+  }
+
   console.log("\n");
   console.log("  ╔══════════════════════════════════════════════════════╗");
   console.log("  ║   THEMIS E2E TEST — On-Chain Escrow Flow (Sepolia)   ║");
@@ -84,7 +111,7 @@ async function main() {
   step(2, "Create escrow on-chain (createEscrowETH)");
 
   const deadline = Math.floor(Date.now() / 1000) + 24 * 3600;
-  const taskCID = "Reply with the word 'verified' to confirm delivery";
+  const taskCID = CLI_TASK || "Reply with the word 'verified' to confirm delivery";
   const value = ethers.parseEther(ESCROW_AMOUNT);
 
   console.log(`  Calling createEscrowETH...`);
@@ -149,7 +176,7 @@ async function main() {
   } else {
     const arbitratorWallet = new ethers.Wallet(ARBITRATOR_PRIVATE_KEY);
     const deliverMessage = `Themis: deliver escrow #${escrowId}`;
-    const deliverable = "verified";
+    const deliverable = CLI_DELIVERABLE || "verified";
 
     console.log(`  Arbitrator:   ${arbitratorWallet.address}`);
     console.log(`  API:          ${THEMIS_API}`);

@@ -327,6 +327,8 @@ export class ThemisHeartbeat {
       const escrowRequest = this.moltbook.parseEscrowRequest(post.content);
       const deliveryRequest = this.moltbook.parseDeliveryRequest(post.content);
       const disputeRequest = this.moltbook.parseDisputeRequest(post.content);
+      const clarifyRequest = this.moltbook.parseClarifyRequest(post.content);
+      const answerRequest = this.moltbook.parseAnswerRequest(post.content);
 
       if (escrowRequest) {
         await this.handleEscrowRequest(post, escrowRequest);
@@ -334,6 +336,10 @@ export class ThemisHeartbeat {
         await this.handleDeliveryRequest(post, deliveryRequest);
       } else if (disputeRequest) {
         await this.handleDisputeRequest(post, disputeRequest);
+      } else if (clarifyRequest) {
+        await this.handleClarifyRequest(post, clarifyRequest);
+      } else if (answerRequest) {
+        await this.handleAnswerRequest(post, answerRequest);
       } else {
         console.log(`[Heartbeat] Post ${post.id} is not a recognized request type`);
         await this.moltbook.reply(post.id,
@@ -341,6 +347,8 @@ export class ThemisHeartbeat {
           `To use my services, try:\n` +
           `- \`@themis escrow\` - Start a new escrow\n` +
           `- \`@themis deliver\` - Submit deliverable\n` +
+          `- \`@themis clarify\` - Ask a clarifying question\n` +
+          `- \`@themis answer\` - Answer a clarification\n` +
           `- \`@themis dispute\` - Raise a dispute\n\n` +
           `See my profile for full documentation.`
         );
@@ -541,6 +549,125 @@ export class ThemisHeartbeat {
       console.error(`[Heartbeat] API dispute failed: ${error.message}`);
       await this.moltbook.reply(post.id,
         `@${post.author} Failed to register dispute: ${error.message}`
+      );
+    }
+  }
+
+  /**
+   * Handle a clarification question request — delegates to REST API
+   */
+  async handleClarifyRequest(post, request) {
+    if (!request.escrowId || !request.question) {
+      await this.moltbook.reply(post.id,
+        `@${post.author} Your clarification request is missing required fields.\n\n` +
+        `Please include:\n` +
+        `- \`escrow: #123\`\n` +
+        `- \`question: Your question here\``
+      );
+      return;
+    }
+
+    console.log(
+      `[Heartbeat] Processing clarification for escrow #${request.escrowId} from @${post.author}`
+    );
+
+    // Sign the clarify message with the arbitrator wallet
+    const message = `Themis: clarify escrow #${request.escrowId}`;
+    const signature = await this.contract.wallet.signMessage(message);
+
+    // Call the REST API
+    const url = `${config.themisApiUrl}/api/escrow/${request.escrowId}/clarify`;
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: request.question,
+          signature,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        await this.moltbook.reply(post.id,
+          `@${post.author} Failed to submit clarification: ${result.error}`
+        );
+        return;
+      }
+
+      await this.moltbook.reply(post.id,
+        `@${post.author} Your question has been recorded for Escrow #${request.escrowId}.\n\n` +
+        `**Question ID**: \`${result.clarification.id}\`\n` +
+        `**Question**: ${request.question}\n\n` +
+        `The submitter can answer with:\n` +
+        `\`@ThemisEscrow answer escrow:#${request.escrowId} questionId:${result.clarification.id} answer:Your answer here\``
+      );
+    } catch (error) {
+      console.error(`[Heartbeat] API clarify failed: ${error.message}`);
+      await this.moltbook.reply(post.id,
+        `@${post.author} Failed to submit clarification: ${error.message}`
+      );
+    }
+  }
+
+  /**
+   * Handle an answer to a clarification question — delegates to REST API
+   */
+  async handleAnswerRequest(post, request) {
+    if (!request.escrowId || !request.questionId || !request.answer) {
+      await this.moltbook.reply(post.id,
+        `@${post.author} Your answer is missing required fields.\n\n` +
+        `Please include:\n` +
+        `- \`escrow: #123\`\n` +
+        `- \`questionId: q-xxx\`\n` +
+        `- \`answer: Your answer here\``
+      );
+      return;
+    }
+
+    console.log(
+      `[Heartbeat] Processing answer for escrow #${request.escrowId} from @${post.author}`
+    );
+
+    // Sign the answer message with the arbitrator wallet
+    const message = `Themis: answer escrow #${request.escrowId}`;
+    const signature = await this.contract.wallet.signMessage(message);
+
+    // Call the REST API
+    const url = `${config.themisApiUrl}/api/escrow/${request.escrowId}/answer`;
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          questionId: request.questionId,
+          answer: request.answer,
+          signature,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        await this.moltbook.reply(post.id,
+          `@${post.author} Failed to submit answer: ${result.error}`
+        );
+        return;
+      }
+
+      await this.moltbook.reply(post.id,
+        `@${post.author} Your answer has been recorded for Escrow #${request.escrowId}.\n\n` +
+        `**Question**: ${result.clarification.question}\n` +
+        `**Answer**: ${result.clarification.answer}\n\n` +
+        `This clarification will be included when verifying the deliverable.`
+      );
+    } catch (error) {
+      console.error(`[Heartbeat] API answer failed: ${error.message}`);
+      await this.moltbook.reply(post.id,
+        `@${post.author} Failed to submit answer: ${error.message}`
       );
     }
   }

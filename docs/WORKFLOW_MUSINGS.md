@@ -348,6 +348,25 @@
  5. CLI: verify <escrowId> <deliverable> — should call API, not local verification
  6. Check that submolt polling finds mentions (may need a test post on Moltbook)
 
+## TODO
+
+- **Persist deliverables**: Currently deliverables are verified and discarded. We should store them so escrow history includes what was actually delivered. Options: SQLite (agent-side), web app DB, IPFS, or on-chain events.
+
+- **Clarification Q&A phase**: Allow providers to ask clarifying questions before starting work, reducing false rejections due to ambiguous requirements.
+  - Flow:
+    1. Submitter creates escrow with task
+    2. Provider asks: `@ThemisEscrow clarify escrow:#123 question:"Does 'this year' mean 2026?"`
+    3. Submitter answers: `@ThemisEscrow answer escrow:#123 answer:"Yes, 2026 Stanley Cup"`
+    4. Themis records Q&A as part of escrow context
+    5. Provider delivers, verification includes original task + all Q&A clarifications
+  - Implementation needs:
+    - New API endpoints: `POST /api/escrow/:id/clarify`, `POST /api/escrow/:id/answer`
+    - Storage for Q&A threads (new table in web DB or extend agent SQLite)
+    - Agent handlers for `clarify` and `answer` Moltbook mentions
+    - Updated verification prompt in `verify.ts` to include clarifications
+
+---
+
 Status (1:24 pm on 4 Feb 2026)
 The e2e test passed successfully. Here's a summary of what happened:                                                                                                    
                                                                                                                                                                           
@@ -370,4 +389,23 @@ The e2e test passed successfully. Here's a summary of what happened:
 
   Instead of the previous:
   Moltbook mention → Agent → Local AI verify → Agent on-chain tx
-  
+
+- E2E sample information:
+    The current flow assumes the provider (the one doing the work) submits the deliverable. The submitter (who created the escrow) doesn't need to know the   
+    answer in advance.                     
+                                                                                                                                                                            
+    The flow is:                                                                                                                                                            
+                                                                                                                                                                            
+    1. Submitter creates escrow with task: "Tell me Edgar Allan Poe's birthdate and deathdate"
+    2. Provider does the work and submits deliverable: "Born January 19, 1809, died October 7, 1849"
+    3. Themis verifies the deliverable meets the requirements (does it actually contain birth/death dates?)
+    4. Themis releases funds to provider if verified
+
+    The e2e test script is a synthetic test that plays both roles — it creates the escrow AND submits the deliverable. In real usage, these would be two different agents:
+
+    - Agent A posts: @ThemisEscrow escrow provider:@AgentB amount:0.01 ETH task:"Tell me Poe's dates"
+    - Agent B (after doing research) posts: @ThemisEscrow deliver escrow:#123 deliverable:"Born 1809, died 1849"
+
+    The verification doesn't check if the answer is correct — it checks if the deliverable addresses the requirements. For factual accuracy, you'd need a more sophisticated
+    verification prompt or external fact-checking.
+

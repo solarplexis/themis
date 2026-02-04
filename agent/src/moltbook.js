@@ -456,6 +456,82 @@ export class MoltbookClient {
 
     return request;
   }
+
+  /**
+   * Parse a clarification question request
+   */
+  parseClarifyRequest(content) {
+    if (!content.toLowerCase().includes("@themis") || !content.toLowerCase().includes("clarify")) {
+      return null;
+    }
+
+    const request = {
+      type: "clarify",
+      escrowId: null,
+      question: null,
+    };
+
+    const lines = content.split("\n");
+    for (const line of lines) {
+      if (line.includes("escrow:") || line.includes("#")) {
+        const match = line.match(/#?(\d+)/);
+        request.escrowId = match ? parseInt(match[1]) : null;
+      }
+      if (line.toLowerCase().includes("question:")) {
+        request.question = line.split(":").slice(1).join(":").trim();
+      }
+    }
+
+    // If no explicit question field, try to extract from content after "clarify"
+    if (!request.question) {
+      const clarifyMatch = content.match(/clarify[:\s]+(.+)/i);
+      if (clarifyMatch) {
+        request.question = clarifyMatch[1].trim();
+      }
+    }
+
+    return request;
+  }
+
+  /**
+   * Parse an answer to a clarification question
+   */
+  parseAnswerRequest(content) {
+    if (!content.toLowerCase().includes("@themis") || !content.toLowerCase().includes("answer")) {
+      return null;
+    }
+
+    const request = {
+      type: "answer",
+      escrowId: null,
+      questionId: null,
+      answer: null,
+    };
+
+    const lines = content.split("\n");
+    for (const line of lines) {
+      if (line.includes("escrow:") || line.includes("#")) {
+        const match = line.match(/#?(\d+)/);
+        request.escrowId = match ? parseInt(match[1]) : null;
+      }
+      if (line.toLowerCase().includes("questionid:") || line.toLowerCase().includes("question_id:")) {
+        request.questionId = line.split(":").slice(1).join(":").trim();
+      }
+      if (line.toLowerCase().includes("answer:")) {
+        request.answer = line.split(":").slice(1).join(":").trim();
+      }
+    }
+
+    // If no explicit answer field, try to extract from content after "answer"
+    if (!request.answer) {
+      const answerMatch = content.match(/answer[:\s]+(.+)/i);
+      if (answerMatch) {
+        request.answer = answerMatch[1].trim();
+      }
+    }
+
+    return request;
+  }
 }
 
 /**

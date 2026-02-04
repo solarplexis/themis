@@ -312,6 +312,153 @@ const signature = await account.signMessage({
               </CodeBlock>
             </div>
           </Endpoint>
+
+          {/* POST /api/escrow/[id]/clarify */}
+          <Endpoint
+            method="POST"
+            path="/api/escrow/:id/clarify"
+            description="Submit a clarifying question about the task requirements. Signer must be the provider (seller) or arbitrator."
+            auth
+          >
+            <div className="mb-4">
+              <p className="text-xs font-semibold text-slate-400 mb-2">
+                Request body
+              </p>
+              <div className="space-y-1">
+                <Field
+                  name="question"
+                  type="string"
+                  description="The clarifying question"
+                />
+                <Field
+                  name="signature"
+                  type="string"
+                  description='EIP-191 signature of "Themis: clarify escrow #<id>" by provider or arbitrator'
+                />
+              </div>
+            </div>
+            <CodeBlock title="Example">
+              {`curl -X POST https://themis-escrow.netlify.app/api/escrow/1/clarify \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "question": "Does this year mean 2026?",
+    "signature": "0xabc123..."
+  }'`}
+            </CodeBlock>
+            <div className="mt-4">
+              <p className="text-xs font-semibold text-slate-400 mb-2">
+                Response
+              </p>
+              <CodeBlock>
+                {`{
+  "success": true,
+  "escrowId": 1,
+  "clarification": {
+    "id": "q-1234567890-abc123",
+    "question": "Does this year mean 2026?",
+    "answer": null,
+    "askedBy": "0x7f2...",
+    "askedAt": 1735689600000
+  }
+}`}
+              </CodeBlock>
+            </div>
+          </Endpoint>
+
+          {/* POST /api/escrow/[id]/answer */}
+          <Endpoint
+            method="POST"
+            path="/api/escrow/:id/answer"
+            description="Answer a clarifying question. Signer must be the submitter (buyer) or arbitrator."
+            auth
+          >
+            <div className="mb-4">
+              <p className="text-xs font-semibold text-slate-400 mb-2">
+                Request body
+              </p>
+              <div className="space-y-1">
+                <Field
+                  name="questionId"
+                  type="string"
+                  description="The ID of the question to answer"
+                />
+                <Field
+                  name="answer"
+                  type="string"
+                  description="The answer to the question"
+                />
+                <Field
+                  name="signature"
+                  type="string"
+                  description='EIP-191 signature of "Themis: answer escrow #<id>" by submitter or arbitrator'
+                />
+              </div>
+            </div>
+            <CodeBlock title="Example">
+              {`curl -X POST https://themis-escrow.netlify.app/api/escrow/1/answer \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "questionId": "q-1234567890-abc123",
+    "answer": "Yes, 2026 Stanley Cup",
+    "signature": "0xabc123..."
+  }'`}
+            </CodeBlock>
+            <div className="mt-4">
+              <p className="text-xs font-semibold text-slate-400 mb-2">
+                Response
+              </p>
+              <CodeBlock>
+                {`{
+  "success": true,
+  "escrowId": 1,
+  "clarification": {
+    "id": "q-1234567890-abc123",
+    "question": "Does this year mean 2026?",
+    "answer": "Yes, 2026 Stanley Cup",
+    "askedBy": "0x7f2...",
+    "answeredBy": "0xAb5..."
+  }
+}`}
+              </CodeBlock>
+            </div>
+            <div className="mt-3 p-3 bg-slate-900 border border-slate-700 rounded text-sm text-slate-400">
+              <span className="font-semibold text-slate-300">Note:</span>{" "}
+              Answered clarifications are automatically included in the AI
+              verification prompt when the provider submits their deliverable.
+            </div>
+          </Endpoint>
+
+          {/* GET /api/escrow/[id]/answer (get all clarifications) */}
+          <Endpoint
+            method="GET"
+            path="/api/escrow/:id/answer"
+            description="Get all clarifications (questions and answers) for an escrow."
+          >
+            <CodeBlock title="Example">
+              {`curl https://themis-escrow.netlify.app/api/escrow/1/answer`}
+            </CodeBlock>
+            <div className="mt-4">
+              <p className="text-xs font-semibold text-slate-400 mb-2">
+                Response
+              </p>
+              <CodeBlock>
+                {`{
+  "escrowId": 1,
+  "clarifications": [
+    {
+      "id": "q-1234567890-abc123",
+      "question": "Does this year mean 2026?",
+      "answer": "Yes, 2026 Stanley Cup",
+      "askedBy": "0x7f2...",
+      "askedAt": 1735689600000,
+      "answeredBy": "0xAb5...",
+      "answeredAt": 1735689700000
+    }
+  ]
+}`}
+              </CodeBlock>
+            </div>
+          </Endpoint>
         </div>
       </section>
 
