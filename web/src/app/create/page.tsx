@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import {
   useAccount,
   useWriteContract,
   useWaitForTransactionReceipt,
   useReadContract,
   useChainId,
+  useSignMessage,
 } from "wagmi";
 import { parseEther, parseUnits, formatUnits, decodeEventLog, formatEther } from "viem";
 import { base } from "wagmi/chains";
@@ -17,12 +18,15 @@ import {
   MOLT_TOKEN_ADDRESS,
 } from "@/config/wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { useSearchParams } from "next/navigation";
 
 type PaymentToken = "ETH" | "MOLT";
 
-export default function CreateEscrowPage() {
+function CreateEscrowForm() {
+  const searchParams = useSearchParams();
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
+  const { signMessageAsync } = useSignMessage();
   const [seller, setSeller] = useState("");
   const [amount, setAmount] = useState("");
   const [taskCID, setTaskCID] = useState("");
@@ -31,6 +35,24 @@ export default function CreateEscrowPage() {
   const [needsApproval, setNeedsApproval] = useState(false);
   const [approvalStep, setApprovalStep] = useState(false);
   const [moltbookStatus, setMoltbookStatus] = useState<"idle" | "posting" | "posted" | "failed">("idle");
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (searchParams) {
+      const provider = searchParams.get("provider");
+      const amountParam = searchParams.get("amount");
+      const tokenParam = searchParams.get("token");
+      const requirements = searchParams.get("requirements");
+      const jobIdParam = searchParams.get("jobId");
+
+      if (provider) setSeller(provider);
+      if (amountParam) setAmount(amountParam);
+      if (tokenParam && (tokenParam === "ETH" || tokenParam === "MOLT"))
+        setPaymentToken(tokenParam);
+      if (requirements) setTaskCID(requirements);
+      if (jobIdParam) setJobId(jobIdParam);
+    }
+  }, [searchParams]);
 
   // Get the correct contract address for current chain
   const contractAddress =
@@ -134,6 +156,30 @@ export default function CreateEscrowPage() {
       ? formatEther(args.amount)
       : formatUnits(args.amount, 18);
 
+    // Link escrow to job if jobId is present
+    const linkEscrow = async () => {
+        if (jobId && address) {
+            try {
+                const message = `Themis: link escrow to job ${jobId}`;
+                const signature = await signMessageAsync({ message }); // Sign as the job poster
+
+                const linkRes = await fetch(`/api/jobs/${jobId}/link-escrow`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ escrowId: Number(args.escrowId), signerAddress: address, signature }),
+                });
+
+                if (!linkRes.ok) {
+                    const errorData = await linkRes.json();
+                    console.error("Failed to link escrow to job:", errorData.error);
+                }
+            } catch (error) {
+                console.error("Error linking escrow to job:", error);
+            }
+        }
+    }
+    linkEscrow();
+
     setMoltbookStatus("posting");
 
     fetch("/api/moltbook/post", {
@@ -155,7 +201,7 @@ export default function CreateEscrowPage() {
       .catch(() => {
         setMoltbookStatus("failed");
       });
-  }, [isSuccess, receipt, moltbookStatus, chainId]);
+  }, [isSuccess, receipt, moltbookStatus, chainId, jobId, address, signMessageAsync]);
 
   const handleApprove = async () => {
     if (!amount) return;
@@ -441,5 +487,13 @@ export default function CreateEscrowPage() {
         </button>
       </form>
     </div>
+  );
+}
+
+export default function CreateEscrowPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <CreateEscrowForm />
+    </Suspense>
   );
 }

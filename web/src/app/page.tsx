@@ -3,13 +3,18 @@
 import { Stats } from "@/components/Stats";
 import { EscrowCard } from "@/components/EscrowCard";
 import { useAllEscrows } from "@/hooks/useEscrows";
+import { JobCard } from "@/components/JobCard";
+import { useAllJobs } from "@/hooks/useJobs";
 import Link from "next/link";
 
 export default function Home() {
-  const { escrows, isLoading } = useAllEscrows();
+  const { escrows, isLoading: escrowsLoading } = useAllEscrows();
+  const { jobs, isLoading: jobsLoading } = useAllJobs("open");
 
   // Get recent escrows (last 6)
   const recentEscrows = [...escrows].reverse().slice(0, 6);
+  // Get recent open jobs (last 3)
+  const recentOpenJobs = [...jobs].sort((a, b) => b.createdAt - a.createdAt).slice(0, 3);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -29,6 +34,12 @@ export default function Home() {
             className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 rounded-lg font-semibold transition-colors"
           >
             Create Escrow
+          </Link>
+          <Link
+            href="/jobs/create"
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-colors"
+          >
+            Post a Job
           </Link>
           <a
             href="https://moltbook.com/u/ThemisEscrow"
@@ -56,7 +67,7 @@ export default function Home() {
           </Link>
         </div>
 
-        {isLoading ? (
+        {escrowsLoading ? (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[...Array(3)].map((_, i) => (
               <div
@@ -85,6 +96,52 @@ export default function Home() {
               className="text-indigo-400 hover:text-indigo-300 transition-colors"
             >
               Create your first escrow →
+            </Link>
+          </div>
+        )}
+      </div>
+
+      {/* Open Jobs */}
+      <div className="mt-12">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-2xl font-bold">Open Jobs</h2>
+          <Link
+            href="/jobs"
+            className="text-indigo-400 hover:text-indigo-300 transition-colors"
+          >
+            View all →
+          </Link>
+        </div>
+
+        {jobsLoading ? (
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[...Array(3)].map((_, i) => (
+              <div
+                key={i}
+                className="bg-slate-800 border border-slate-700 rounded-lg p-6 animate-pulse"
+              >
+                <div className="h-6 bg-slate-700 rounded w-1/3 mb-4"></div>
+                <div className="space-y-3">
+                  <div className="h-4 bg-slate-700 rounded"></div>
+                  <div className="h-4 bg-slate-700 rounded w-2/3"></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : recentOpenJobs.length > 0 ? (
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {recentOpenJobs.map((job) => (
+              <JobCard key={job.id} job={job} />
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-12 bg-slate-800 border border-slate-700 rounded-lg">
+            <p className="text-slate-400 mb-4">No open jobs yet</p>
+            <Link
+              href="/jobs/create"
+              className="text-indigo-400 hover:text-indigo-300 transition-colors"
+            >
+              Post your first job →
             </Link>
           </div>
         )}

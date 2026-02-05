@@ -457,35 +457,36 @@ export class MoltbookClient {
   }
 
   /**
-   * Parse a clarification question request
+   * Parse a job request
    */
-  parseClarifyRequest(content) {
-    if (!content.toLowerCase().includes("@themis") || !content.toLowerCase().includes("clarify")) {
+  parseJobRequest(content) {
+    if (!content.toLowerCase().includes("@themis") || !content.toLowerCase().includes("job")) {
       return null;
     }
 
     const request = {
-      type: "clarify",
-      escrowId: null,
-      question: null,
+      type: "job",
+      title: null,
+      requirements: null,
+      budget: null,
+      token: "ETH",
+      deadline: null,
     };
 
     const lines = content.split("\n");
     for (const line of lines) {
-      if (line.includes("escrow:") || line.includes("#")) {
-        const match = line.match(/#?(\d+)/);
-        request.escrowId = match ? parseInt(match[1]) : null;
-      }
-      if (line.toLowerCase().includes("question:")) {
-        request.question = line.split(":").slice(1).join(":").trim();
-      }
-    }
-
-    // If no explicit question field, try to extract from content after "clarify"
-    if (!request.question) {
-      const clarifyMatch = content.match(/clarify[:\s]+(.+)/i);
-      if (clarifyMatch) {
-        request.question = clarifyMatch[1].trim();
+      if (line.toLowerCase().includes("title:")) {
+        request.title = line.split(":").slice(1).join(":").trim();
+      } else if (line.toLowerCase().includes("requirements:")) {
+        request.requirements = line.split(":").slice(1).join(":").trim();
+      } else if (line.toLowerCase().includes("budget:")) {
+        const match = line.match(/([\d.]+)\s*(molt|eth)/i);
+        if (match) {
+          request.budget = parseFloat(match[1]);
+          request.token = match[2].toUpperCase();
+        }
+      } else if (line.toLowerCase().includes("deadline:")) {
+        request.deadline = line.split(":").slice(1).join(":").trim();
       }
     }
 
@@ -493,42 +494,70 @@ export class MoltbookClient {
   }
 
   /**
-   * Parse an answer to a clarification question
+   * Parse a proposal request
    */
-  parseAnswerRequest(content) {
-    if (!content.toLowerCase().includes("@themis") || !content.toLowerCase().includes("answer")) {
+  parseProposalRequest(content) {
+    if (!content.toLowerCase().includes("@themis") || !content.toLowerCase().includes("propose")) {
       return null;
     }
 
     const request = {
-      type: "answer",
-      escrowId: null,
-      questionId: null,
-      answer: null,
+      type: "propose",
+      jobId: null,
+      providerAddress: null,
+      bidAmount: null,
+      token: "ETH",
+      pitch: null,
+      estimatedDelivery: null,
     };
 
     const lines = content.split("\n");
     for (const line of lines) {
-      if (line.includes("escrow:") || line.includes("#")) {
-        const match = line.match(/#?(\d+)/);
-        request.escrowId = match ? parseInt(match[1]) : null;
-      }
-      if (line.toLowerCase().includes("questionid:") || line.toLowerCase().includes("question_id:")) {
-        request.questionId = line.split(":").slice(1).join(":").trim();
-      }
-      if (line.toLowerCase().includes("answer:")) {
-        request.answer = line.split(":").slice(1).join(":").trim();
+      if (line.toLowerCase().includes("job:")) {
+        const match = line.match(/job-(\w+-\w+)/i);
+        request.jobId = match ? match[0] : line.split(":").slice(1).join(":").trim();
+      } else if (line.toLowerCase().includes("address:")) {
+        const match = line.match(/(0x[0-9a-fA-F]{40})/);
+        request.providerAddress = match ? match[1] : null;
+      } else if (line.toLowerCase().includes("bid:")) {
+        const match = line.match(/([\d.]+)\s*(molt|eth)/i);
+        if (match) {
+          request.bidAmount = parseFloat(match[1]);
+          request.token = match[2].toUpperCase();
+        }
+      } else if (line.toLowerCase().includes("pitch:")) {
+        request.pitch = line.split(":").slice(1).join(":").trim();
+      } else if (line.toLowerCase().includes("delivery:")) {
+        request.estimatedDelivery = line.split(":").slice(1).join(":").trim();
       }
     }
+    return request;
+  }
 
-    // If no explicit answer field, try to extract from content after "answer"
-    if (!request.answer) {
-      const answerMatch = content.match(/answer[:\s]+(.+)/i);
-      if (answerMatch) {
-        request.answer = answerMatch[1].trim();
-      }
+  /**
+   * Parse an accept request
+   */
+  parseAcceptRequest(content) {
+    if (!content.toLowerCase().includes("@themis") || !content.toLowerCase().includes("accept")) {
+      return null;
     }
 
+    const request = {
+      type: "accept",
+      jobId: null,
+      proposalId: null,
+    };
+
+    const lines = content.split("\n");
+    for (const line of lines) {
+      if (line.toLowerCase().includes("job:")) {
+        const match = line.match(/job-(\w+-\w+)/i);
+        request.jobId = match ? match[0] : line.split(":").slice(1).join(":").trim();
+      } else if (line.toLowerCase().includes("proposal:")) {
+        const match = line.match(/p-(\w+-\w+)/i);
+        request.proposalId = match ? match[0] : line.split(":").slice(1).join(":").trim();
+      }
+    }
     return request;
   }
 }
@@ -557,6 +586,56 @@ I'll confirm once funds are received and notify the provider to begin work.
 
 ---
 *Secured by Themis | [View Contract](https://sepolia.etherscan.io/address/${contractAddress})*`;
+}
+
+/**
+ * Format a job confirmation message for Moltbook
+ */
+export function formatJobConfirmation(jobId, posterUsername, title, budget, token) {
+  return `## Job Posted ✓
+
+**Job ID**: ${jobId}
+**Title**: ${title}
+**Budget**: ${budget} ${token}
+
+@${posterUsername}, your job has been posted! Providers can now submit proposals.
+You can view details at https://themis-escrow.netlify.app/jobs/${jobId}
+
+---
+*Secured by Themis*`;
+}
+
+/**
+ * Format a proposal confirmation message for Moltbook
+ */
+export function formatProposalConfirmation(jobId, providerUsername, bidAmount, token) {
+  return `## Proposal Submitted ✓
+
+**Job ID**: ${jobId}
+@${providerUsername}, your proposal of ${bidAmount} ${token} has been submitted.
+
+The job poster will be notified.
+
+---
+*Secured by Themis*`;
+}
+
+/**
+ * Format an accept confirmation message for Moltbook
+ */
+export function formatAcceptConfirmation(jobId, proposalId, posterUsername, providerUsername) {
+  return `## Proposal Accepted ✓
+
+**Job ID**: ${jobId}
+**Proposal ID**: ${proposalId}
+
+@${posterUsername} has accepted @${providerUsername}'s proposal!
+
+@${posterUsername}, please create an escrow for this job.
+@${providerUsername}, you may now proceed with the work.
+
+---
+*Secured by Themis*`;
 }
 
 /**
