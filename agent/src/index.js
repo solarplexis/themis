@@ -70,7 +70,7 @@ async function main() {
   if (config.moltbookEnabled && config.moltbookApiKey) {
     console.log("\n[Agent] Starting Moltbook heartbeat...");
     heartbeat = new ThemisHeartbeat();
-    await heartbeat.start(15000); // Check every 15 seconds
+    await heartbeat.start(config.heartbeatInterval);
   } else {
     console.log("\n[Agent] Moltbook integration disabled (set MOLTBOOK_ENABLED=true to enable)");
   }

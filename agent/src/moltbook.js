@@ -3,6 +3,10 @@ import { isPostProcessed } from "./db.js";
 
 const MOLTBOOK_API = "https://www.moltbook.com/api/v1";
 
+function ts() {
+  return new Date().toISOString().replace("T", " ").slice(0, 19);
+}
+
 /**
  * Moltbook API Client for Themis agent
  */
@@ -18,7 +22,7 @@ export class MoltbookClient {
 
   async request(endpoint, options = {}) {
     const url = `${MOLTBOOK_API}${endpoint}`;
-    console.log(`[Moltbook] Requesting: ${url}`);
+    console.log(`${ts()} [Moltbook] Requesting: ${url}`);
     const headers = {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${this.apiKey}`,
@@ -37,7 +41,7 @@ export class MoltbookClient {
       });
 
       clearTimeout(timeoutId);
-      console.log(`[Moltbook] Response status: ${response.status}`);
+      console.log(`${ts()} [Moltbook] Response status: ${response.status}`);
 
       if (!response.ok) {
         const error = await response.text();
@@ -47,10 +51,10 @@ export class MoltbookClient {
       return await response.json();
     } catch (error) {
       if (error.name === 'AbortError') {
-        console.error(`[Moltbook] Request to ${endpoint} timed out after 10s`);
+        console.error(`${ts()} [Moltbook] Request to ${endpoint} timed out after 10s`);
         throw new Error('Request timeout');
       }
-      console.error(`[Moltbook] Request to ${endpoint} failed: ${error.message}`);
+      console.error(`${ts()} [Moltbook] Request to ${endpoint} failed: ${error.message}`);
       throw error;
     }
   }
@@ -100,7 +104,7 @@ export class MoltbookClient {
     });
 
     this.agentId = result.agentId;
-    console.log(`[Moltbook] Registered with ID: ${this.agentId}`);
+    console.log(`${ts()} [Moltbook] Registered with ID: ${this.agentId}`);
     return result;
   }
 
@@ -115,29 +119,28 @@ export class MoltbookClient {
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        console.log(`[Moltbook] Fetching profile for ${this.username} (attempt ${attempt}/${maxRetries})...`);
-        
         // Use public profile endpoint - no auth required
         const url = `${MOLTBOOK_API}/agents/profile?name=${this.username}`;
-        const response = await fetch(url, { 
+        if (attempt > 1) {
+          console.log(`${ts()} [Moltbook] Fetching profile (retry ${attempt}/${maxRetries})...`);
+        }
+        const response = await fetch(url, {
           timeout: 10000 // 10 second timeout
         });
         
-        console.log(`[Moltbook] Response status: ${response.status}`);
-        
         if (!response.ok) {
           const error = await response.text();
-          console.error(`[Moltbook] Error: ${error}`);
+          console.error(`${ts()} [Moltbook] Error: ${error}`);
           
           // If not the last attempt, retry
           if (attempt < maxRetries) {
-            console.log(`[Moltbook] Retrying in ${retryDelay}ms...`);
+            console.log(`${ts()} [Moltbook] Retrying in ${retryDelay}ms...`);
             await new Promise(resolve => setTimeout(resolve, retryDelay));
             continue;
           }
           
           // Last attempt failed, return cached data
-          console.log(`[Moltbook] All retries failed, returning cached data (${this.lastMentions.length} mentions)`);
+          console.log(`${ts()} [Moltbook] All retries failed, returning cached data (${this.lastMentions.length} mentions)`);
           this.consecutiveFailures++;
           return this.lastMentions;
         }
@@ -145,24 +148,22 @@ export class MoltbookClient {
         const result = await response.json();
         
         if (!result.success || !result.recentPosts) {
-          console.log(`[Moltbook] No recent posts found`);
+          console.log(`${ts()} [Moltbook] No recent posts found`);
           
           // Try again if not last attempt
           if (attempt < maxRetries) {
-            console.log(`[Moltbook] Retrying in ${retryDelay}ms...`);
+            console.log(`${ts()} [Moltbook] Retrying in ${retryDelay}ms...`);
             await new Promise(resolve => setTimeout(resolve, retryDelay));
             continue;
           }
           
           // Return cached data
-          console.log(`[Moltbook] No data available, returning cached data (${this.lastMentions.length} mentions)`);
+          console.log(`${ts()} [Moltbook] No data available, returning cached data (${this.lastMentions.length} mentions)`);
           this.consecutiveFailures++;
           return this.lastMentions;
         }
         
         const posts = result.recentPosts || [];
-        console.log(`[Moltbook] Found ${posts.length} recent posts`);
-        
         // Normalize author field — API returns { id, name } object or may be absent
         for (const post of posts) {
           if (post.author && typeof post.author === "object") {
@@ -179,8 +180,6 @@ export class MoltbookClient {
           return mentionPattern.test(content) && post.author !== this.username;
         });
         
-        console.log(`[Moltbook] Found ${mentions.length} mentions`);
-        
         // Success! Update cache
         this.lastMentions = mentions;
         this.lastSuccessfulFetch = Date.now();
@@ -189,18 +188,18 @@ export class MoltbookClient {
         return mentions;
         
       } catch (error) {
-        console.error(`[Moltbook] Error fetching profile (attempt ${attempt}/${maxRetries}): ${error.message}`);
+        console.error(`${ts()} [Moltbook] Error fetching profile (attempt ${attempt}/${maxRetries}): ${error.message}`);
         
         // If not the last attempt, retry
         if (attempt < maxRetries) {
-          console.log(`[Moltbook] Retrying in ${retryDelay}ms...`);
+          console.log(`${ts()} [Moltbook] Retrying in ${retryDelay}ms...`);
           await new Promise(resolve => setTimeout(resolve, retryDelay));
           continue;
         }
         
         // All retries failed, return cached data
         const cacheAge = this.lastSuccessfulFetch ? Math.round((Date.now() - this.lastSuccessfulFetch) / 1000) : 'never';
-        console.log(`[Moltbook] All retries exhausted. Returning cached data (${this.lastMentions.length} mentions, last updated: ${cacheAge}s ago)`);
+        console.log(`${ts()} [Moltbook] All retries exhausted. Returning cached data (${this.lastMentions.length} mentions, last updated: ${cacheAge}s ago)`);
         this.consecutiveFailures++;
         return this.lastMentions;
       }
@@ -242,7 +241,7 @@ export class MoltbookClient {
           allMentions.push(post);
         }
       } catch (error) {
-        console.log(`[Moltbook] Failed to poll m/${submolt}: ${error.message}`);
+        console.log(`${ts()} [Moltbook] Failed to poll m/${submolt}: ${error.message}`);
       }
     }
 
@@ -255,7 +254,7 @@ export class MoltbookClient {
     });
 
     if (unique.length > 0) {
-      console.log(`[Moltbook] Submolt polling found ${unique.length} new mentions`);
+      console.log(`${ts()} [Moltbook] Submolt polling found ${unique.length} new mentions`);
     }
 
     return unique;
@@ -273,7 +272,7 @@ export class MoltbookClient {
    * Create a new post
    */
   async createPost(content, options = {}) {
-    console.log(`[Moltbook] Creating post...`);
+    console.log(`${ts()} [Moltbook] Creating post...`);
 
     const result = await this.request("/posts", {
       method: "POST",
@@ -285,7 +284,7 @@ export class MoltbookClient {
     });
 
     const postId = result.post?.id || result.postId || result.id;
-    console.log(`[Moltbook] Posted: ${postId}`);
+    console.log(`${ts()} [Moltbook] Posted: ${postId}`);
     return result;
   }
 
@@ -293,12 +292,12 @@ export class MoltbookClient {
    * Reply to a post
    */
   async reply(postId, content) {
-    console.log(`[Moltbook] Replying to post ${postId}...`);
+    console.log(`${ts()} [Moltbook] Replying to post ${postId}...`);
     const result = await this.request(`/posts/${postId}/comments`, {
       method: "POST",
       body: JSON.stringify({ content }),
     });
-    console.log(`[Moltbook] Replied to ${postId}`);
+    console.log(`${ts()} [Moltbook] Replied to ${postId}`);
     return result;
   }
 
@@ -306,12 +305,12 @@ export class MoltbookClient {
    * Update the agent's profile on Moltbook
    */
   async updateProfile(fields) {
-    console.log(`[Moltbook] Updating profile...`);
+    console.log(`${ts()} [Moltbook] Updating profile...`);
     const result = await this.request("/agents/me", {
       method: "PATCH",
       body: JSON.stringify(fields),
     });
-    console.log(`[Moltbook] Profile updated`);
+    console.log(`${ts()} [Moltbook] Profile updated`);
     return result;
   }
 
@@ -321,7 +320,7 @@ export class MoltbookClient {
    * @param {string} filename - Filename with extension
    */
   async uploadAvatar(imageBuffer, filename) {
-    console.log(`[Moltbook] Uploading avatar (${filename})...`);
+    console.log(`${ts()} [Moltbook] Uploading avatar (${filename})...`);
     const formData = new FormData();
     const blob = new Blob([imageBuffer], { type: `image/${filename.split('.').pop()}` });
     formData.append("file", blob, filename);
@@ -341,7 +340,7 @@ export class MoltbookClient {
     }
 
     const result = await response.json();
-    console.log(`[Moltbook] Avatar uploaded`);
+    console.log(`${ts()} [Moltbook] Avatar uploaded`);
     return result;
   }
 

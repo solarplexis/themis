@@ -74,7 +74,10 @@ export const config = {
   ],
 
   // Polling interval for events (ms)
-  pollInterval: 15000,
+  pollInterval: parseInt(process.env.POLL_INTERVAL) || 60000,
+
+  // Heartbeat interval for Moltbook (ms)
+  heartbeatInterval: parseInt(process.env.HEARTBEAT_INTERVAL) || 60000,
 
   // MOLT token (Base only)
   moltTokenAddress: "0xb695559b26bb2c9703ef1935c37aeae9526bab07",

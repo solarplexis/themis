@@ -2,6 +2,10 @@ import { ethers } from "ethers";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
+
+function ts() {
+  return new Date().toISOString().replace("T", " ").slice(0, 19);
+}
 import { MoltbookClient, formatVerificationResult } from "./moltbook.js";
 import { MoltEscrowContract, EscrowStatus } from "./contract.js";
 import { config } from "./config.js";
@@ -47,26 +51,26 @@ export class ThemisHeartbeat {
    */
   async start(intervalMs = 60000) {
     console.log("[Heartbeat] Starting Themis heartbeat...");
-    console.log(`[Heartbeat] Checking every ${intervalMs / 1000} seconds`);
-    console.log(`[Heartbeat] Polling submolts: ${config.pollSubmolts.join(", ")}`);
-    console.log(`[Heartbeat] API: ${config.themisApiUrl}`);
+    console.log(`${ts()} [Heartbeat] Checking every ${intervalMs / 1000} seconds`);
+    console.log(`${ts()} [Heartbeat] Polling submolts: ${config.pollSubmolts.join(", ")}`);
+    console.log(`${ts()} [Heartbeat] API: ${config.themisApiUrl}`);
 
     this.isRunning = true;
 
     // Check agent status first (optional - authenticated endpoint may be unreliable)
     try {
       const status = await this.moltbook.getStatus();
-      console.log(`[Heartbeat] Agent status: ${status.status || "unknown"}`);
+      console.log(`${ts()} [Heartbeat] Agent status: ${status.status || "unknown"}`);
       if (status.agent) {
-        console.log(`[Heartbeat] Agent name: ${status.agent.name}`);
-        console.log(`[Heartbeat] Profile: ${status.agent.profile_url || "N/A"}`);
+        console.log(`${ts()} [Heartbeat] Agent name: ${status.agent.name}`);
+        console.log(`${ts()} [Heartbeat] Profile: ${status.agent.profile_url || "N/A"}`);
       } else if (status.status === "unclaimed" || status.status === "pending") {
-        console.log(`[Heartbeat] Agent needs to be claimed/registered`);
-        console.log(`[Heartbeat] Visit Moltbook to claim your agent`);
+        console.log(`${ts()} [Heartbeat] Agent needs to be claimed/registered`);
+        console.log(`${ts()} [Heartbeat] Visit Moltbook to claim your agent`);
       }
     } catch (error) {
-      console.log(`[Heartbeat] Status check failed (${error.message})`);
-      console.log(`[Heartbeat] Continuing — agent will still work`);
+      console.log(`${ts()} [Heartbeat] Status check failed (${error.message})`);
+      console.log(`${ts()} [Heartbeat] Continuing — agent will still work`);
     }
 
     // Update profile on startup
@@ -82,9 +86,9 @@ export class ThemisHeartbeat {
           "API: https://themis-escrow.netlify.app/docs\n" +
           "Skill manifest: https://themis-escrow.netlify.app/skill.json",
       });
-      console.log(`[Heartbeat] Profile description updated`);
+      console.log(`${ts()} [Heartbeat] Profile description updated`);
     } catch (error) {
-      console.log(`[Heartbeat] Profile update failed (${error.message}) — continuing`);
+      console.log(`${ts()} [Heartbeat] Profile update failed (${error.message}) — continuing`);
     }
 
     // Upload avatar on startup
@@ -92,9 +96,9 @@ export class ThemisHeartbeat {
       const avatarPath = join(__dirname, "..", "avatar.png");
       const avatarBuffer = readFileSync(avatarPath);
       await this.moltbook.uploadAvatar(avatarBuffer, "avatar.png");
-      console.log(`[Heartbeat] Avatar uploaded`);
+      console.log(`${ts()} [Heartbeat] Avatar uploaded`);
     } catch (error) {
-      console.log(`[Heartbeat] Avatar upload failed (${error.message}) — continuing`);
+      console.log(`${ts()} [Heartbeat] Avatar upload failed (${error.message}) — continuing`);
     }
 
     // Initial check
@@ -124,7 +128,7 @@ export class ThemisHeartbeat {
    */
   async tick() {
     try {
-      // Primary: poll submolt feeds for mentions
+      // Primary: poll submolt feeds for mentions (pre-filtered by db)
       let mentions = await this.moltbook.getSubmoltMentions();
 
       // Fallback: try profile endpoint if submolt polling found nothing
@@ -134,6 +138,9 @@ export class ThemisHeartbeat {
         mentions = profileMentions.filter(
           (post) => !isPostProcessed(String(post.id))
         );
+        if (profileMentions.length > 0 && mentions.length === 0) {
+          console.log(`${ts()} [Heartbeat] ${profileMentions.length} mentions from profile — all already processed`);
+        }
       }
 
       this.lastCheck = new Date().toISOString();
@@ -156,7 +163,7 @@ export class ThemisHeartbeat {
         await this.postStatusUpdate();
       }
     } catch (error) {
-      console.error(`[Heartbeat] Error: ${error.message}`);
+      console.error(`${ts()} [Heartbeat] Error: ${error.message}`);
     }
   }
 
@@ -179,13 +186,13 @@ export class ThemisHeartbeat {
 
       if (events.length === 0) return;
 
-      console.log(`[Heartbeat] Found ${events.length} EscrowCreated events in blocks ${fromBlock}-${currentBlock}`);
+      console.log(`${ts()} [Heartbeat] Found ${events.length} EscrowCreated events in blocks ${fromBlock}-${currentBlock}`);
 
       for (const event of events) {
         await this.matchPendingEscrow(event);
       }
     } catch (error) {
-      console.error(`[Heartbeat] Error polling escrow events: ${error.message}`);
+      console.error(`${ts()} [Heartbeat] Error polling escrow events: ${error.message}`);
     }
   }
 
@@ -210,12 +217,12 @@ export class ThemisHeartbeat {
         sellerAddr === pendingProviderAddr &&
         Math.abs(eventAmount - pending.amount) / pending.amount < 0.01
       ) {
-        console.log(`[Heartbeat] Matched pending escrow ${key} to on-chain escrow #${event.escrowId}`);
+        console.log(`${ts()} [Heartbeat] Matched pending escrow ${key} to on-chain escrow #${event.escrowId}`);
 
         // Track provider identity for delivery verification
         if (pending.providerUsername) {
           setEscrowProvider(event.escrowId, pending.providerUsername);
-          console.log(`[Heartbeat] Registered provider @${pending.providerUsername} for escrow #${event.escrowId}`);
+          console.log(`${ts()} [Heartbeat] Registered provider @${pending.providerUsername} for escrow #${event.escrowId}`);
         }
 
         const explorer = config.chainId === 8453
@@ -234,9 +241,9 @@ export class ThemisHeartbeat {
 
         try {
           await this.moltbook.reply(pending.postId, confirmation);
-          console.log(`[Heartbeat] Replied to post ${pending.postId} with escrow #${event.escrowId} confirmation`);
+          console.log(`${ts()} [Heartbeat] Replied to post ${pending.postId} with escrow #${event.escrowId} confirmation`);
         } catch (error) {
-          console.error(`[Heartbeat] Failed to reply with confirmation: ${error.message}`);
+          console.error(`${ts()} [Heartbeat] Failed to reply with confirmation: ${error.message}`);
         }
 
         deletePendingEscrow(key);
@@ -293,15 +300,15 @@ export class ThemisHeartbeat {
 
       this.lastStatusPost = Date.now();
       setKV("lastStatusPost", String(this.lastStatusPost));
-      console.log(`[Heartbeat] Posted status update (${escrowCount} escrows, ${funded} active)`);
+      console.log(`${ts()} [Heartbeat] Posted status update (${escrowCount} escrows, ${funded} active)`);
     } catch (error) {
       // Don't let status post failures block the heartbeat
       if (error.message.includes("429") || error.message.includes("rate")) {
-        console.log(`[Heartbeat] Status post rate-limited — will retry next cycle`);
+        console.log(`${ts()} [Heartbeat] Status post rate-limited — will retry next cycle`);
         this.lastStatusPost = Date.now() - (23 * 60 * 60 * 1000);
         setKV("lastStatusPost", String(this.lastStatusPost));
       } else {
-        console.error(`[Heartbeat] Status post failed: ${error.message}`);
+        console.error(`${ts()} [Heartbeat] Status post failed: ${error.message}`);
         this.lastStatusPost = Date.now() - (23 * 60 * 60 * 1000);
         setKV("lastStatusPost", String(this.lastStatusPost));
       }
@@ -320,7 +327,7 @@ export class ThemisHeartbeat {
     }
     markPostProcessed(postId);
 
-    console.log(`[Heartbeat] Processing post ${post.id} from @${post.author}`);
+    console.log(`${ts()} [Heartbeat] Processing post ${post.id} from @${post.author}`);
 
     try {
       // Try to parse as different request types
@@ -341,7 +348,7 @@ export class ThemisHeartbeat {
       } else if (answerRequest) {
         await this.handleAnswerRequest(post, answerRequest);
       } else {
-        console.log(`[Heartbeat] Post ${post.id} is not a recognized request type`);
+        console.log(`${ts()} [Heartbeat] Post ${post.id} is not a recognized request type`);
         await this.moltbook.reply(post.id,
           `Hi @${post.author}! I'm Themis, the DeFi Arbitrator.\n\n` +
           `To use my services, try:\n` +
@@ -354,7 +361,7 @@ export class ThemisHeartbeat {
         );
       }
     } catch (error) {
-      console.error(`[Heartbeat] Error processing post ${post.id}: ${error.message}`);
+      console.error(`${ts()} [Heartbeat] Error processing post ${post.id}: ${error.message}`);
       await this.moltbook.reply(post.id,
         `Sorry @${post.author}, I encountered an error processing your request: ${error.message}`
       );
@@ -365,7 +372,7 @@ export class ThemisHeartbeat {
    * Handle an escrow creation request
    */
   async handleEscrowRequest(post, request) {
-    console.log(`[Heartbeat] Escrow request from @${post.author}`);
+    console.log(`${ts()} [Heartbeat] Escrow request from @${post.author}`);
     console.log(`  Provider: ${request.provider}`);
     console.log(`  Amount: ${request.amount} ${request.token}`);
 
@@ -430,7 +437,7 @@ export class ThemisHeartbeat {
    * Handle a delivery/verification request — delegates to REST API
    */
   async handleDeliveryRequest(post, request) {
-    console.log(`[Heartbeat] Delivery request for escrow #${request.escrowId}`);
+    console.log(`${ts()} [Heartbeat] Delivery request for escrow #${request.escrowId}`);
 
     if (!request.escrowId || !request.deliverable) {
       await this.moltbook.reply(post.id,
@@ -445,7 +452,7 @@ export class ThemisHeartbeat {
     // Verify the poster is the registered provider for this escrow
     const registeredProvider = getEscrowProvider(request.escrowId);
     if (registeredProvider && post.author.toLowerCase() !== registeredProvider.toLowerCase()) {
-      console.log(`[Heartbeat] Rejected delivery from @${post.author} — expected @${registeredProvider}`);
+      console.log(`${ts()} [Heartbeat] Rejected delivery from @${post.author} — expected @${registeredProvider}`);
       await this.moltbook.reply(post.id,
         `@${post.author} Only the registered provider (@${registeredProvider}) can submit deliverables for Escrow #${request.escrowId}.`
       );
@@ -465,7 +472,7 @@ export class ThemisHeartbeat {
 
     // Call the REST API
     const url = `${config.themisApiUrl}/api/escrow/${request.escrowId}/deliver`;
-    console.log(`[Heartbeat] POST ${url}`);
+    console.log(`${ts()} [Heartbeat] POST ${url}`);
 
     try {
       const response = await fetch(url, {
@@ -483,7 +490,7 @@ export class ThemisHeartbeat {
       }
 
       const result = await response.json();
-      console.log(`[Heartbeat] API result: ${result.approved ? "APPROVED" : "REJECTED"} (${result.confidence}%)`);
+      console.log(`${ts()} [Heartbeat] API result: ${result.approved ? "APPROVED" : "REJECTED"} (${result.confidence}%)`);
 
       // Post result to Moltbook
       const reply = formatVerificationResult(
@@ -495,7 +502,7 @@ export class ThemisHeartbeat {
 
       await this.moltbook.reply(post.id, reply);
     } catch (error) {
-      console.error(`[Heartbeat] API deliver failed: ${error.message}`);
+      console.error(`${ts()} [Heartbeat] API deliver failed: ${error.message}`);
       await this.moltbook.reply(post.id,
         `@${post.author} Verification failed: ${error.message}`
       );
@@ -506,7 +513,7 @@ export class ThemisHeartbeat {
    * Handle a dispute request — delegates to REST API
    */
   async handleDisputeRequest(post, request) {
-    console.log(`[Heartbeat] Dispute request for escrow #${request.escrowId}`);
+    console.log(`${ts()} [Heartbeat] Dispute request for escrow #${request.escrowId}`);
 
     if (!request.escrowId) {
       await this.moltbook.reply(post.id,
@@ -521,7 +528,7 @@ export class ThemisHeartbeat {
 
     // Call the REST API
     const url = `${config.themisApiUrl}/api/escrow/${request.escrowId}/dispute`;
-    console.log(`[Heartbeat] POST ${url}`);
+    console.log(`${ts()} [Heartbeat] POST ${url}`);
 
     try {
       const response = await fetch(url, {
@@ -546,7 +553,7 @@ export class ThemisHeartbeat {
         `I'll review the case and post my ruling shortly.`
       );
     } catch (error) {
-      console.error(`[Heartbeat] API dispute failed: ${error.message}`);
+      console.error(`${ts()} [Heartbeat] API dispute failed: ${error.message}`);
       await this.moltbook.reply(post.id,
         `@${post.author} Failed to register dispute: ${error.message}`
       );
@@ -605,7 +612,7 @@ export class ThemisHeartbeat {
         `\`@ThemisEscrow answer escrow:#${request.escrowId} questionId:${result.clarification.id} answer:Your answer here\``
       );
     } catch (error) {
-      console.error(`[Heartbeat] API clarify failed: ${error.message}`);
+      console.error(`${ts()} [Heartbeat] API clarify failed: ${error.message}`);
       await this.moltbook.reply(post.id,
         `@${post.author} Failed to submit clarification: ${error.message}`
       );
@@ -665,7 +672,7 @@ export class ThemisHeartbeat {
         `This clarification will be included when verifying the deliverable.`
       );
     } catch (error) {
-      console.error(`[Heartbeat] API answer failed: ${error.message}`);
+      console.error(`${ts()} [Heartbeat] API answer failed: ${error.message}`);
       await this.moltbook.reply(post.id,
         `@${post.author} Failed to submit answer: ${error.message}`
       );
