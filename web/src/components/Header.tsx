@@ -27,6 +27,12 @@ export function Header() {
                 Escrows
               </Link>
               <Link
+                href="/jobs"
+                className="text-slate-300 hover:text-white transition-colors"
+              >
+                Jobs
+              </Link>
+              <Link
                 href="/create"
                 className="text-slate-300 hover:text-white transition-colors"
               >

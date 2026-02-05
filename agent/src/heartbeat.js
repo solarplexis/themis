@@ -336,6 +336,9 @@ export class ThemisHeartbeat {
       const disputeRequest = this.moltbook.parseDisputeRequest(post.content);
       const clarifyRequest = this.moltbook.parseClarifyRequest(post.content);
       const answerRequest = this.moltbook.parseAnswerRequest(post.content);
+      const jobRequest = this.moltbook.parseJobRequest(post.content);
+      const proposalRequest = this.moltbook.parseProposalRequest(post.content);
+      const acceptRequest = this.moltbook.parseAcceptRequest(post.content);
 
       if (escrowRequest) {
         await this.handleEscrowRequest(post, escrowRequest);
@@ -347,6 +350,12 @@ export class ThemisHeartbeat {
         await this.handleClarifyRequest(post, clarifyRequest);
       } else if (answerRequest) {
         await this.handleAnswerRequest(post, answerRequest);
+      } else if (jobRequest) {
+        await this.handleJobRequest(post, jobRequest);
+      } else if (proposalRequest) {
+        await this.handleProposalRequest(post, proposalRequest);
+      } else if (acceptRequest) {
+        await this.handleAcceptRequest(post, acceptRequest);
       } else {
         console.log(`${ts()} [Heartbeat] Post ${post.id} is not a recognized request type`);
         await this.moltbook.reply(post.id,
@@ -354,9 +363,12 @@ export class ThemisHeartbeat {
           `To use my services, try:\n` +
           `- \`@themis escrow\` - Start a new escrow\n` +
           `- \`@themis deliver\` - Submit deliverable\n` +
+          `- \`@themis dispute\` - Raise a dispute\n` +
           `- \`@themis clarify\` - Ask a clarifying question\n` +
           `- \`@themis answer\` - Answer a clarification\n` +
-          `- \`@themis dispute\` - Raise a dispute\n\n` +
+          `- \`@themis job\` - Post a new job\n` +
+          `- \`@themis propose\` - Submit a proposal for a job\n` +
+          `- \`@themis accept\` - Accept a job proposal\n\n` +
           `See my profile for full documentation.`
         );
       }
@@ -365,6 +377,196 @@ export class ThemisHeartbeat {
       await this.moltbook.reply(post.id,
         `Sorry @${post.author}, I encountered an error processing your request: ${error.message}`
       );
+    }
+  }
+
+  /**
+   * Handle a job creation request
+   */
+  async handleJobRequest(post, request) {
+    console.log(`${ts()} [Heartbeat] Job request from @${post.author}`);
+
+    if (!request.title || !request.requirements || !request.budget || !request.token) {
+      await this.moltbook.reply(post.id,
+        `@${post.author} Your job request is missing required fields.\n\n` +
+        `Please include:\n` +
+        `- \`title: Your Job Title\`\n` +
+        `- \`requirements: ipfs://... or description\`\n` +
+        `- \`budget: X ETH\` or \`budget: X MOLT\`\n` +
+        `- \`deadline: YYYY-MM-DD\` (optional)`
+      );
+      return;
+    }
+
+    try {
+      const message = `Themis: create job`;
+      const signature = await this.contract.wallet.signMessage(message);
+
+      const url = `${config.themisApiUrl}/api/jobs`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          posterAddress: this.contract.wallet.address, // Agent is the poster
+          posterUsername: this.moltbook.username,
+          title: request.title,
+          requirements: request.requirements,
+          budget: request.budget,
+          token: request.token,
+          deadline: request.deadline,
+          signature,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(error.error || `API returned ${response.status}`);
+      }
+
+      const result = await response.json();
+      const job = result.job;
+
+      await this.moltbook.reply(
+        post.id,
+        this.moltbook.formatJobConfirmation(
+          job.id,
+          post.author, // Original author is the poster
+          job.title,
+          job.budget,
+          job.token
+        )
+      );
+    } catch (error) {
+      console.error(`${ts()} [Heartbeat] Failed to create job: ${error.message}`);
+      await this.moltbook.reply(post.id, `@${post.author} Failed to create job: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle a job proposal request
+   */
+  async handleProposalRequest(post, request) {
+    console.log(`${ts()} [Heartbeat] Proposal request from @${post.author} for job ${request.jobId}`);
+
+    if (!request.jobId || !request.providerAddress || !request.bidAmount || !request.token || !request.pitch) {
+      await this.moltbook.reply(post.id,
+        `@${post.author} Your proposal request is missing required fields.\n\n` +
+        `Please include:\n` +
+        `- \`job: job-ID\`\n` +
+        `- \`address: 0x...\` (your wallet address)\n` +
+        `- \`bid: X ETH\` or \`bid: X MOLT\`\n` +
+        `- \`pitch: Your proposal pitch\``
+      );
+      return;
+    }
+
+    try {
+      const message = `Themis: propose on job ${request.jobId}`;
+      const signature = await this.contract.wallet.signMessage(message); // Agent signs as provider
+
+      const url = `${config.themisApiUrl}/api/jobs/${request.jobId}/propose`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providerAddress: this.contract.wallet.address, // Agent is the provider
+          providerUsername: this.moltbook.username,
+          bidAmount: request.bidAmount,
+          token: request.token,
+          pitch: request.pitch,
+          estimatedDelivery: request.estimatedDelivery,
+          signature,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(error.error || `API returned ${response.status}`);
+      }
+
+      const result = await response.json();
+      const proposal = result.proposal;
+
+      // Find the job poster to tag them
+      const jobResponse = await fetch(`${config.themisApiUrl}/api/jobs/${request.jobId}`);
+      const jobResult = await jobResponse.json();
+      const jobPosterUsername = jobResult.job.posterUsername || "job poster";
+
+
+      await this.moltbook.reply(
+        post.id,
+        this.moltbook.formatProposalConfirmation(
+          request.jobId,
+          post.author, // Original author is the provider
+          proposal.bidAmount,
+          proposal.token
+        ) + `\n\n@${jobPosterUsername}, a new proposal has been submitted for your job.`
+      );
+    } catch (error) {
+      console.error(`${ts()} [Heartbeat] Failed to submit proposal: ${error.message}`);
+      await this.moltbook.reply(post.id, `@${post.author} Failed to submit proposal: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle a job acceptance request
+   */
+  async handleAcceptRequest(post, request) {
+    console.log(`${ts()} [Heartbeat] Accept request from @${post.author} for job ${request.jobId}, proposal ${request.proposalId}`);
+
+    if (!request.jobId || !request.proposalId) {
+      await this.moltbook.reply(post.id,
+        `@${post.author} Your accept request is missing required fields.\n\n` +
+        `Please include:\n` +
+        `- \`job: job-ID\`\n` +
+        `- \`proposal: p-ID\``
+      );
+      return;
+    }
+
+    try {
+      const message = `Themis: accept proposal on job ${request.jobId}`;
+      const signature = await this.contract.wallet.signMessage(message); // Agent signs as arbitrator
+
+      const url = `${config.themisApiUrl}/api/jobs/${request.jobId}/accept`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          proposalId: request.proposalId,
+          signerAddress: this.contract.wallet.address, // Agent is the signer (arbitrator)
+          signature,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(error.error || `API returned ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      // Fetch job and proposal details to get usernames for reply
+      const jobResponse = await fetch(`${config.themisApiUrl}/api/jobs/${request.jobId}`);
+      const jobResult = await jobResponse.json();
+      const job = jobResult.job;
+
+      const acceptedProposal = job.proposals.find(p => p.id === request.proposalId);
+      const providerUsername = acceptedProposal?.providerUsername || "provider";
+
+
+      await this.moltbook.reply(
+        post.id,
+        this.moltbook.formatAcceptConfirmation(
+          request.jobId,
+          request.proposalId,
+          post.author, // Original author is the poster
+          providerUsername
+        )
+      );
+    } catch (error) {
+      console.error(`${ts()} [Heartbeat] Failed to accept proposal: ${error.message}`);
+      await this.moltbook.reply(post.id, `@${post.author} Failed to accept proposal: ${error.message}`);
     }
   }
 

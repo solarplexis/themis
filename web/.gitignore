@@ -42,3 +42,4 @@ next-env.d.ts
 
 # Local clarifications store (dev)
 .clarifications/
+.jobs/
