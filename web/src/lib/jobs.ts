@@ -130,7 +130,19 @@ export async function getJob(id: string): Promise<Job | null> {
     const store = getJobsStore();
     try {
       const data = await store.get(key, { type: "json" });
-      return data ? (data as Job) : null;
+      if (!data) return null;
+      
+      const job = data as Job;
+      
+      // Migration: ensure moltbookPostId field exists for old jobs
+      if (job.moltbookPostId === undefined) {
+        job.moltbookPostId = null;
+      }
+      if (job.moltbookRetries === undefined) {
+        job.moltbookRetries = 0;
+      }
+      
+      return job;
     } catch {
       return null;
     }
@@ -187,19 +199,34 @@ export async function createJob(params: CreateJobParams): Promise<Job> {
 export async function updateJobMoltbookPostId(jobId: string, postId: string): Promise<boolean> {
   const job = await getJob(jobId);
   if (!job) {
+    console.error(`[updateJobMoltbookPostId] Job ${jobId} not found`);
     return false;
   }
 
-  job.moltbookPostId = postId;
-  job.moltbookStatus = "posted";
-  job.updatedAt = Date.now();
+  // Ensure all fields exist before update
+  const updatedJob = {
+    ...job,
+    moltbookPostId: postId,
+    moltbookStatus: "posted" as MoltbookStatus,
+    updatedAt: Date.now(),
+  };
 
   const key = jobId;
   if (isServerless()) {
-    await getJobsStore().setJSON(key, job);
+    await getJobsStore().setJSON(key, updatedJob);
+    console.log(`[updateJobMoltbookPostId] Updated job ${jobId} in Netlify Blobs with postId ${postId}`);
   } else {
-    await localSet(key, job);
+    await localSet(key, updatedJob);
+    console.log(`[updateJobMoltbookPostId] Updated job ${jobId} locally with postId ${postId}`);
   }
+  
+  // Verify the update
+  const verifyJob = await getJob(jobId);
+  if (verifyJob?.moltbookPostId !== postId) {
+    console.error(`[updateJobMoltbookPostId] Verification failed for job ${jobId}. Expected postId ${postId}, got ${verifyJob?.moltbookPostId}`);
+    return false;
+  }
+  
   return true;
 }
 

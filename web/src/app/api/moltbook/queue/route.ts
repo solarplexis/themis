@@ -109,10 +109,26 @@ export async function POST(request: NextRequest) {
       const result = await response.json();
       const postId = result.id || result.postId;
       
-      const { updateJobMoltbookPostId } = await import("@/lib/jobs");
-      await updateJobMoltbookPostId(job.id, postId);
+      console.log(`[Moltbook Queue] Moltbook response for job ${job.id}:`, { postId, result });
       
-      console.log(`[Moltbook Queue] Successfully posted job ${job.id}`);
+      if (!postId) {
+        console.error(`[Moltbook Queue] No postId in response for job ${job.id}:`, result);
+        results.failed = true;
+        
+        const { updateJobMoltbookStatus } = await import("@/lib/jobs");
+        await updateJobMoltbookStatus(job.id, "failed");
+        
+        return NextResponse.json({
+          message: "Moltbook posted but no postId returned",
+          ...results,
+          error: "No postId in response",
+        });
+      }
+      
+      const { updateJobMoltbookPostId } = await import("@/lib/jobs");
+      const updated = await updateJobMoltbookPostId(job.id, postId);
+      
+      console.log(`[Moltbook Queue] Successfully posted job ${job.id}, postId: ${postId}, updated: ${updated}`);
       results.posted = true;
       
       return NextResponse.json({
@@ -120,6 +136,7 @@ export async function POST(request: NextRequest) {
         ...results,
         jobId: job.id,
         postId,
+        updated,
       });
     } catch (error) {
       console.error(`[Moltbook Queue] Error posting job ${job.id}:`, error);
