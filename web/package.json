@@ -21,6 +21,7 @@
     "wagmi": "^2.19.5"
   },
   "devDependencies": {
+    "@netlify/functions": "^5.1.2",
     "@netlify/plugin-nextjs": "^5.15.7",
     "@tailwindcss/postcss": "^4",
     "@types/minimatch": "^6.0.0",
