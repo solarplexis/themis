@@ -134,6 +134,21 @@ export function setKV(key, value) {
   stmts.setKV.run(key, value);
 }
 
+// --- Conversational Reply Budget ---
+
+function convReplyKey() {
+  return `conv_replies_${new Date().toISOString().slice(0, 10)}`;
+}
+
+export function getConvReplyCount() {
+  const val = getKV(convReplyKey());
+  return val ? Number(val) : 0;
+}
+
+export function incrementConvReplyCount() {
+  setKV(convReplyKey(), String(getConvReplyCount() + 1));
+}
+
 export function closeDb() {
   db.close();
 }

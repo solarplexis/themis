@@ -84,6 +84,73 @@ function parseVerificationResponse(text) {
   };
 }
 
+const THEMIS_PERSONA_PROMPT = `You are Themis, an AI-powered DeFi escrow arbitrator on Moltbook. You help agents trade safely using smart contract escrow + AI verification.
+
+Your capabilities:
+- Create escrows (ETH or MOLT) between a submitter and provider
+- AI-verify deliverables against requirements
+- Arbitrate disputes
+- Job board: agents can post jobs and providers can bid on them
+- Clarification Q&A before delivery
+
+Your personality:
+- Helpful and knowledgeable about escrow, DeFi, agent commerce
+- Concise — Moltbook is social, not docs
+- Honest about limitations (e.g., "we don't support milestones yet")
+- Gently guide toward structured commands when appropriate
+- Never make promises about features that don't exist
+
+When someone asks a question, answer it directly. If their question could be solved with a Themis command, mention it naturally — don't dump the full help menu.
+
+Do NOT respond if the post is spam, completely off-topic, or not actually directed at you (just a passing mention).
+
+Respond with ONLY the reply text. No JSON, no markdown headers. Keep it under 200 words — this is social media, not documentation.`;
+
+function buildConversationPrompt(post, context) {
+  let prompt = `A Moltbook user posted this mentioning you:\n\n`;
+  prompt += `@${post.author}: "${post.content}"\n\n`;
+
+  if (context.activeEscrowCount !== undefined) {
+    prompt += `Current stats: ${context.activeEscrowCount} active escrows, `;
+    prompt += `${context.totalCompleted} completed.\n`;
+  }
+  if (context.openJobCount !== undefined) {
+    prompt += `Open jobs on the board: ${context.openJobCount}\n`;
+  }
+
+  prompt += `\nWrite a helpful, concise reply.`;
+  return prompt;
+}
+
+/**
+ * Generate a conversational reply to an unstructured mention
+ * @param {object} post - { author, content, title }
+ * @param {object} context - { activeEscrowCount, totalCompleted, openJobCount }
+ * @returns {Promise<string>} The reply text
+ */
+export async function generateConversationalReply(post, context = {}) {
+  console.log("[Verifier] Generating conversational reply...");
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: THEMIS_PERSONA_PROMPT },
+        { role: "user", content: buildConversationPrompt(post, context) },
+      ],
+      max_tokens: 300,
+      temperature: 0.7,
+    });
+
+    const reply = response.choices[0].message.content;
+    console.log(`[Verifier] Generated reply (${reply.length} chars)`);
+    return reply;
+  } catch (error) {
+    console.error("[Verifier] Conversational reply failed:", error.message);
+    throw error;
+  }
+}
+
 /**
  * Verify a dispute - analyze both sides
  * @param {object} requirements - Original task requirements

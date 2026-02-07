@@ -20,7 +20,10 @@ import {
   setEscrowProvider,
   getKV,
   setKV,
+  getConvReplyCount,
+  incrementConvReplyCount,
 } from "./db.js";
+import { generateConversationalReply } from "./verifier.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -44,6 +47,9 @@ export class ThemisHeartbeat {
       setKV("lastStatusPost", String(this.lastStatusPost));
     }
     this.isRunning = false;
+    // Track recent conversational replies by author to prevent bot-to-bot loops
+    // Map<author, timestamp>
+    this.recentConvReplies = new Map();
   }
 
   /**
@@ -357,26 +363,97 @@ export class ThemisHeartbeat {
       } else if (acceptRequest) {
         await this.handleAcceptRequest(post, acceptRequest);
       } else {
-        console.log(`${ts()} [Heartbeat] Post ${post.id} is not a recognized request type`);
-        await this.moltbook.reply(post.id,
-          `Hi @${post.author}! I'm Themis, the DeFi Arbitrator.\n\n` +
-          `To use my services, try:\n` +
-          `- \`@themis escrow\` - Start a new escrow\n` +
-          `- \`@themis deliver\` - Submit deliverable\n` +
-          `- \`@themis dispute\` - Raise a dispute\n` +
-          `- \`@themis clarify\` - Ask a clarifying question\n` +
-          `- \`@themis answer\` - Answer a clarification\n` +
-          `- \`@themis job\` - Post a new job\n` +
-          `- \`@themis propose\` - Submit a proposal for a job\n` +
-          `- \`@themis accept\` - Accept a job proposal\n\n` +
-          `See my profile for full documentation.`
-        );
+        await this.handleUnstructuredMention(post);
       }
     } catch (error) {
       console.error(`${ts()} [Heartbeat] Error processing post ${post.id}: ${error.message}`);
       await this.moltbook.reply(post.id,
         `Sorry @${post.author}, I encountered an error processing your request: ${error.message}`
       );
+    }
+  }
+
+  /**
+   * Handle an unstructured mention — classify, gate, and optionally generate an AI reply
+   */
+  async handleUnstructuredMention(post) {
+    const content = (post.content || "").trim();
+    const author = post.author;
+
+    // Skip very short posts (likely noise)
+    if (content.length < 10) {
+      console.log(`${ts()} [Heartbeat] Skipping short unstructured mention from @${author}`);
+      return;
+    }
+
+    // Skip if we replied to this author recently (prevent bot-to-bot loops)
+    const lastReply = this.recentConvReplies.get(author);
+    if (lastReply && Date.now() - lastReply < 5 * 60 * 1000) {
+      console.log(`${ts()} [Heartbeat] Skipping @${author} — replied conversationally within last 5 min`);
+      return;
+    }
+
+    // Skip if daily budget exhausted
+    const MAX_DAILY_CONV_REPLIES = 20;
+    const dailyCount = getConvReplyCount();
+    if (dailyCount >= MAX_DAILY_CONV_REPLIES) {
+      console.log(`${ts()} [Heartbeat] Daily conversational reply budget exhausted (${dailyCount}/${MAX_DAILY_CONV_REPLIES})`);
+      return;
+    }
+
+    // Classification heuristics — is this worth an AI-generated reply?
+    const isReplyToOurPost = !!post.parent_id;
+    const hasQuestion = content.includes("?");
+    const domainKeywords = /\b(escrow|job|payment|arbitrat|disput|deliver|fund|wallet|contract|proposal|bid|milestone|verify|molt|eth|defi|agent)\b/i;
+    const isDomainRelevant = domainKeywords.test(content);
+
+    if (!isReplyToOurPost && !hasQuestion && !isDomainRelevant) {
+      console.log(`${ts()} [Heartbeat] Skipping unstructured mention from @${author} — not relevant enough`);
+      return;
+    }
+
+    console.log(`${ts()} [Heartbeat] Generating conversational reply for @${author} (post ${post.id})`);
+
+    try {
+      // Gather context for the AI
+      const context = {};
+      try {
+        const escrowCount = Number(await this.contract.getEscrowCount());
+        let active = 0, completed = 0;
+        for (let i = 1; i <= escrowCount; i++) {
+          try {
+            const escrow = await this.contract.getEscrow(i);
+            if (escrow.status === EscrowStatus.Funded) active++;
+            if (escrow.status === EscrowStatus.Released) completed++;
+          } catch { /* skip */ }
+        }
+        context.activeEscrowCount = active;
+        context.totalCompleted = completed;
+      } catch {
+        // Context gathering is best-effort
+      }
+
+      try {
+        const jobsResponse = await fetch(`${config.themisApiUrl}/api/jobs?status=open`);
+        if (jobsResponse.ok) {
+          const jobsResult = await jobsResponse.json();
+          context.openJobCount = jobsResult.jobs ? jobsResult.jobs.length : 0;
+        }
+      } catch {
+        // Context gathering is best-effort
+      }
+
+      const reply = await generateConversationalReply(
+        { author, content, title: post.title },
+        context
+      );
+
+      await this.moltbook.reply(post.id, reply);
+      incrementConvReplyCount();
+      this.recentConvReplies.set(author, Date.now());
+      console.log(`${ts()} [Heartbeat] Conversational reply sent to @${author} (${dailyCount + 1}/${MAX_DAILY_CONV_REPLIES} today)`);
+    } catch (error) {
+      console.error(`${ts()} [Heartbeat] Failed to generate conversational reply: ${error.message}`);
     }
   }
 
